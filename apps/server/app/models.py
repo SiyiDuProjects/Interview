@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 Speaker = Literal["interviewer", "candidate"]
 GenerationMode = Literal["hybrid", "api_only"]
+FastModelChoice = Literal["gpt-5-mini", "gpt-5-nano", "gpt-5-dual"]
 
 
 class TranscriptTurn(BaseModel):
@@ -28,6 +29,7 @@ class CoachRequest(BaseModel):
     history: list[TranscriptTurn] = Field(default_factory=list)
     context: CandidateContext = Field(default_factory=CandidateContext)
     generation_mode: GenerationMode = "hybrid"
+    fast_model: FastModelChoice | None = None
 
 
 class AnswerVariant(BaseModel):
@@ -36,6 +38,7 @@ class AnswerVariant(BaseModel):
     talking_points: list[str]
     source: str
     ready: bool = True
+    elapsed_ms: int | None = None
 
 
 class CoachResponse(BaseModel):
@@ -43,6 +46,7 @@ class CoachResponse(BaseModel):
     question_type: str
     detected_follow_up: bool
     fast_answer: AnswerVariant
+    fast_answer_alternatives: list[AnswerVariant] = Field(default_factory=list)
     deep_answer: AnswerVariant
     follow_up_angles: list[str]
     resume_hook: str | None = None

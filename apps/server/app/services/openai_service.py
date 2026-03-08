@@ -12,7 +12,8 @@ from app.models import AnswerVariant, CoachRequest, DetailJobStatus
 from app.services.interview_coach import CoachingPlan
 
 
-FAST_MODEL_FALLBACKS = ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini"]
+DETAIL_MODEL_FALLBACKS = ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini"]
+FAST_MODEL_OVERRIDES = ("gpt-5-mini", "gpt-5-nano")
 READY_DETAIL_JOB_TTL_SECONDS = 600
 MAX_DETAIL_JOB_AGE_SECONDS = 3600
 MAX_DETAIL_JOB_COUNT = 128
@@ -28,24 +29,26 @@ def detail_pipeline_enabled(request: CoachRequest) -> bool:
     return bool(settings.openai_api_key)
 
 
-def resolve_fast_answer(request: CoachRequest, plan: CoachingPlan) -> AnswerVariant:
+def resolve_fast_answers(request: CoachRequest, plan: CoachingPlan) -> tuple[AnswerVariant, list[AnswerVariant]]:
     settings = get_settings()
     if not settings.openai_api_key:
-        return _build_unavailable_answer(
+        unavailable = _build_unavailable_answer(
             label="快速回答",
             short_answer="未检测到可用的大模型配置，当前无法生成快速回答。",
             source="AI 不可用",
         )
+        return unavailable, []
 
     try:
-        return _generate_openai_fast_answer(request, plan)
+        return _generate_openai_fast_answers(request, plan)
     except Exception as exc:
-        return _build_failure_answer(
+        failure = _build_failure_answer(
             label="快速回答",
             short_answer="AI 快速回答生成失败，请稍后重试。",
             source="AI 失败",
             error=str(exc),
         )
+        return failure, []
 
 
 def start_detail_job(request: CoachRequest, plan: CoachingPlan) -> str:
@@ -151,6 +154,7 @@ def _publish_streamed_answer(job_id: str, answer: AnswerVariant) -> None:
             talking_points=[],
             source=answer.source,
             ready=False,
+            elapsed_ms=answer.elapsed_ms,
         )
         _set_detail_job_status(job_id, ready=False, answer=partial)
         time.sleep(0.12)
@@ -164,6 +168,7 @@ def _publish_streamed_answer(job_id: str, answer: AnswerVariant) -> None:
             talking_points=list(partial_points),
             source=answer.source,
             ready=False,
+            elapsed_ms=answer.elapsed_ms,
         )
         _set_detail_job_status(job_id, ready=False, answer=partial)
         time.sleep(0.08)
@@ -174,47 +179,39 @@ def _publish_streamed_answer(job_id: str, answer: AnswerVariant) -> None:
         talking_points=answer.talking_points,
         source=answer.source,
         ready=True,
+        elapsed_ms=answer.elapsed_ms,
     )
     _set_detail_job_status(job_id, ready=True, answer=final_answer)
 
 
-def _generate_openai_fast_answer(request: CoachRequest, plan: CoachingPlan) -> AnswerVariant:
+def _generate_openai_fast_answers(request: CoachRequest, plan: CoachingPlan) -> tuple[AnswerVariant, list[AnswerVariant]]:
     settings = get_settings()
     prompt = _build_fast_prompt(request, plan)
-    candidate_models = [settings.openai_fast_model, settings.openai_model, *FAST_MODEL_FALLBACKS]
-    tried: list[str] = []
-    last_error: Exception | None = None
+    requested_fast_model = (request.fast_model or "").strip()
+    if requested_fast_model == "gpt-5-dual":
+        ordered_results = _request_parallel_fast_answers(
+            prompt=prompt,
+            base_url=settings.openai_base_url,
+            api_key=settings.openai_api_key,
+            timeout_seconds=settings.openai_timeout_seconds,
+        )
+        return ordered_results[0], ordered_results[1:]
 
-    for model in candidate_models:
-        if not model or model in tried:
-            continue
-        tried.append(model)
-        try:
-            return _request_openai_structured_answer(
-                model=model,
-                prompt=prompt,
-                base_url=settings.openai_base_url,
-                api_key=settings.openai_api_key,
-                timeout_seconds=settings.openai_timeout_seconds,
-                label="快速回答",
-                schema_name="fast_answer",
-                min_items=2,
-                max_items=3,
-                max_output_tokens=360,
-            )
-        except Exception as exc:
-            last_error = exc
-            continue
-
-    if last_error is None:
-        raise ValueError("OpenAI fast generation failed without an explicit error")
-    raise last_error
+    model = requested_fast_model if requested_fast_model in FAST_MODEL_OVERRIDES else settings.openai_fast_model
+    answer = _request_fast_answer_for_model(
+        model=model,
+        prompt=prompt,
+        base_url=settings.openai_base_url,
+        api_key=settings.openai_api_key,
+        timeout_seconds=settings.openai_timeout_seconds,
+    )
+    return answer, []
 
 
 def _generate_openai_detail_answer(request: CoachRequest, plan: CoachingPlan) -> AnswerVariant:
     settings = get_settings()
     prompt = _build_detail_prompt(request, plan)
-    candidate_models = [settings.openai_model, *FAST_MODEL_FALLBACKS]
+    candidate_models = [settings.openai_model, *DETAIL_MODEL_FALLBACKS]
     tried: list[str] = []
     last_error: Exception | None = None
 
@@ -257,6 +254,7 @@ def _request_openai_structured_answer(
     max_items: int,
     max_output_tokens: int,
 ) -> AnswerVariant:
+    started_at = time.perf_counter()
     verbosity = "low" if model.startswith("gpt-5") else "medium"
     payload = {
         "model": model,
@@ -313,19 +311,99 @@ def _request_openai_structured_answer(
         talking_points=parsed["talking_points"][:max_items],
         source=f"OpenAI {model}",
         ready=True,
+        elapsed_ms=int((time.perf_counter() - started_at) * 1000),
     )
+
+
+def _request_fast_answer_for_model(
+    *,
+    model: str,
+    prompt: str,
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+) -> AnswerVariant:
+    return _request_openai_structured_answer(
+        model=model,
+        prompt=prompt,
+        base_url=base_url,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+        label="快速回答",
+        schema_name="fast_answer",
+        min_items=2,
+        max_items=3,
+        max_output_tokens=360,
+    )
+
+
+def _request_parallel_fast_answers(
+    *,
+    prompt: str,
+    base_url: str,
+    api_key: str,
+    timeout_seconds: float,
+) -> list[AnswerVariant]:
+    results: dict[str, AnswerVariant] = {}
+    errors: dict[str, Exception] = {}
+    lock = threading.Lock()
+
+    def worker(model: str) -> None:
+        try:
+            answer = _request_fast_answer_for_model(
+                model=model,
+                prompt=prompt,
+                base_url=base_url,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            answer = _build_failure_answer(
+                label="快速回答",
+                short_answer=f"{model} 生成失败，请稍后重试。",
+                source=f"OpenAI {model} 失败",
+                error=str(exc),
+            )
+            with lock:
+                errors[model] = exc
+                results[model] = answer
+            return
+
+        with lock:
+            results[model] = answer
+
+    threads = [threading.Thread(target=worker, args=(model,), daemon=True) for model in FAST_MODEL_OVERRIDES]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    ordered = [results[model] for model in FAST_MODEL_OVERRIDES if model in results]
+    if not ordered:
+        if errors:
+            raise next(iter(errors.values()))
+        raise ValueError("No fast answers were generated")
+    return ordered
 
 
 def _build_fast_prompt(request: CoachRequest, plan: CoachingPlan) -> str:
     history_lines = [f"{turn.speaker}: {turn.text}" for turn in request.history[-4:]]
     history_block = "\n".join(history_lines) if history_lines else "无历史对话"
     return (
-        "你是中文模拟面试助手。\n"
+        "你在扮演一位参加技术面试的候选人，任务是替候选人生成可以直接说出口的中文回答。\n"
         "无论问题、上下文或简历内容是中文还是英文，输出都必须只使用简体中文。\n"
-        "不要输出英文句子，不要中英混写，technical term 也优先翻成中文；只有在必须保留的专有名词场景下才保留英文缩写。\n"
+        "回答风格必须像真实面试时开口说话，不要写成教材、博客、文档或标准答案。\n"
+        "不要学术化，不要定义腔，不要分章节，不要出现“首先其次最后”“综上所述”“从本质上讲”这类书面表达。\n"
+        "语气要自然、直接、自信，像候选人在现场回答，而不是 AI 在解释知识点。\n"
         "返回 JSON，包含 short_answer 和 talking_points。\n"
-        "short_answer 必须适合候选人直接口头复述，控制在 80 字以内；talking_points 给 2 到 3 条，且每条都必须是简体中文。\n"
-        f"问题: {request.turn.text}\n"
+        "fast answer 目标是 10 到 15 秒口语回答。\n"
+        "short_answer 必须：\n"
+        "1. 先用一句话直接给结论；\n"
+        "2. 总长度控制在候选人 10 到 15 秒内能自然说完；\n"
+        "3. 简洁清楚，适合直接口头复述。\n"
+        "talking_points 必须给 2 到 3 条，每条都短一些，像候选人后续准备展开的提示，不要写成长句，不要写成教科书条目。\n"
+        "如果是追问，不要把整题从头重讲，只补当前追问真正关心的点。\n"
+        f"当前问题: {request.turn.text}\n"
         f"主题: {plan.topic}\n"
         f"问题类型: {plan.question_type}\n"
         f"是否追问: {plan.detected_follow_up}\n"
@@ -338,16 +416,25 @@ def _build_detail_prompt(request: CoachRequest, plan: CoachingPlan) -> str:
     history_block = "\n".join(history_lines) if history_lines else "无历史对话"
     resume_hook = plan.resume_hook or "无简历挂钩点"
     return (
-        "你是中文模拟面试助手。\n"
+        "你在扮演一位参加技术面试的候选人，任务是替候选人生成可以直接说出口的中文回答。\n"
         "无论问题、上下文或简历内容是中文还是英文，输出都必须只使用简体中文。\n"
-        "不要输出英文句子，不要中英混写，technical term 也优先翻成中文；只有在必须保留的专有名词场景下才保留英文缩写。\n"
+        "回答必须像技术面试里的自然口语，不要写成教材、八股标准答案、博客文章或培训资料。\n"
+        "不要过度解释背景，不要堆术语，不要出现很重的书面表达。要像候选人在现场边想边说，但表达仍然清楚。\n"
         "返回 JSON，包含 short_answer 和 talking_points。\n"
-        "short_answer 要写成候选人可以直接口头表达的完整简体中文回答；talking_points 给 3 到 5 条，覆盖原理、取舍、场景，且每条都必须是简体中文。\n"
-        f"问题: {request.turn.text}\n"
+        "detailed answer 目标是 30 到 60 秒口语说明。\n"
+        "short_answer 必须：\n"
+        "1. 第一话先给结论；\n"
+        "2. 后面自然补 2 到 3 个支撑点；\n"
+        "3. 可以稍微讲深一点；\n"
+        "4. 可以补一句工程上的实际取舍、踩坑或使用场景；\n"
+        "5. 整体仍然要简洁清楚，适合候选人直接口头复述。\n"
+        "talking_points 必须给 3 到 5 条，每条都短、口语化，重点覆盖原理、取舍、场景、工程实践，不要写成学术提纲。\n"
+        "如果是追问，就延续前文，只补深入部分，不要整段重讲。\n"
+        f"当前问题: {request.turn.text}\n"
         f"主题: {plan.topic}\n"
         f"问题类型: {plan.question_type}\n"
         f"是否追问: {plan.detected_follow_up}\n"
-        f"快速回答: {plan.fast_answer.short_answer}\n"
+        f"快速回答草稿: {plan.fast_answer.short_answer}\n"
         f"可能追问: {', '.join(plan.follow_up_angles)}\n"
         f"简历挂钩点: {resume_hook}\n"
         f"最近对话:\n{history_block}\n"

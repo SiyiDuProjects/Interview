@@ -21,6 +21,7 @@ export interface AnswerVariant {
   talking_points: string[];
   source: string;
   ready: boolean;
+  elapsed_ms?: number | null;
 }
 
 export interface CoachResponse {
@@ -28,6 +29,7 @@ export interface CoachResponse {
   question_type: string;
   detected_follow_up: boolean;
   fast_answer: AnswerVariant;
+  fast_answer_alternatives?: AnswerVariant[];
   deep_answer: AnswerVariant;
   follow_up_angles: string[];
   resume_hook?: string | null;
@@ -35,6 +37,8 @@ export interface CoachResponse {
   confidence: number;
   detail_job_id?: string | null;
 }
+
+export type FastModelChoice = "gpt-5-mini" | "gpt-5-nano" | "gpt-5-dual";
 
 export interface DetailJobStatus {
   job_id: string;

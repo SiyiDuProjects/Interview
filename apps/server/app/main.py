@@ -12,7 +12,7 @@ from app.services.deepgram_realtime import DeepgramRealtimeError, proxy_live_tra
 from app.services.openai_service import (
     detail_pipeline_enabled,
     get_detail_job_status,
-    resolve_fast_answer,
+    resolve_fast_answers,
     start_detail_job,
     stream_detail_events,
 )
@@ -138,7 +138,7 @@ async def transcribe_stream(websocket: WebSocket, speaker: str) -> None:
 @app.post("/api/coach/respond", response_model=CoachResponse)
 def coach_respond(payload: CoachRequest) -> CoachResponse:
     plan = build_coaching_plan(payload)
-    fast_answer = resolve_fast_answer(payload, plan)
+    fast_answer, fast_answer_alternatives = resolve_fast_answers(payload, plan)
     deep_answer = AnswerVariant(
         label="详细回答",
         short_answer="未检测到可用的大模型配置，当前无法生成详细回答。",
@@ -160,6 +160,7 @@ def coach_respond(payload: CoachRequest) -> CoachResponse:
         question_type=plan.question_type,
         detected_follow_up=plan.detected_follow_up,
         fast_answer=fast_answer,
+        fast_answer_alternatives=fast_answer_alternatives,
         deep_answer=deep_answer,
         follow_up_angles=plan.follow_up_angles,
         resume_hook=plan.resume_hook,

@@ -9,7 +9,7 @@ from pathlib import Path
 class Settings:
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
-    openai_fast_model: str = "gpt-4.1-mini"
+    openai_fast_model: str = "gpt-5-mini"
     openai_model: str = "gpt-4.1-mini"
     openai_timeout_seconds: float = 12.0
     openai_transcription_model: str = "gpt-4o-mini-transcribe"
@@ -81,7 +81,7 @@ def get_settings() -> Settings:
     return Settings(
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-        openai_fast_model=os.getenv("OPENAI_FAST_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
+        openai_fast_model=os.getenv("OPENAI_FAST_MODEL", "gpt-5-mini").strip() or "gpt-5-mini",
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
         openai_timeout_seconds=timeout_seconds,
         openai_transcription_model=os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip()

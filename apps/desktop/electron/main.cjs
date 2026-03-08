@@ -4,7 +4,7 @@ const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { app, BrowserWindow, desktopCapturer, session, shell } = require("electron");
 
-const WINDOW_TITLE = "模拟面试实时助手";
+const WINDOW_TITLE = "Sage";
 const API_PORT = 8000;
 const API_HEALTH_URL = `http://127.0.0.1:${API_PORT}/health`;
 const API_START_TIMEOUT_MS = 15000;
@@ -129,10 +129,10 @@ async function createMainWindow() {
   const rendererUrl = getRendererUrl();
 
   const mainWindow = new BrowserWindow({
-    width: 1560,
-    height: 960,
-    minWidth: 1200,
-    minHeight: 760,
+    width: 1280,
+    height: 820,
+    minWidth: 900,
+    minHeight: 560,
     autoHideMenuBar: true,
     title: WINDOW_TITLE,
     backgroundColor: "#f6f3ed",
