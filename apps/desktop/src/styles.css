@@ -343,6 +343,12 @@ button {
   align-items: center;
 }
 
+.live-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .live-panel-head::after {
   content: "";
   position: absolute;
@@ -783,6 +789,10 @@ button {
   border-radius: 999px;
   background: var(--surface-soft);
   text-align: left;
+}
+
+.chat-row.candidate .bubble.multiline {
+  border-radius: 20px;
 }
 
 .bubble-meta {

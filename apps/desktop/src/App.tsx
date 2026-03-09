@@ -1,4 +1,4 @@
-import { KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+﻿import { KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   getCaptureLabel,
   requestCaptureStream,
@@ -53,6 +53,11 @@ interface RenderedTranscriptTurn extends TranscriptTurn {
 
 interface HandleTurnOptions {
   forceAnswer?: boolean;
+}
+
+interface PreparedTurn {
+  turn: TranscriptTurn | null;
+  punctuationAttached: boolean;
 }
 
 interface RealtimeMessage {
@@ -124,6 +129,8 @@ export default function App() {
 
   const renderedHistory = useMemo(() => buildRenderedHistory(history, buffers), [history, buffers]);
   const sessionOnline = captureActive.candidate || captureActive.interviewer;
+  const canGenerateAnswer =
+    !loading && (Boolean(buffers.interviewer.trim()) || history.some((item) => item.speaker === "interviewer"));
   const startButtonLabel =
     captureStartState === "starting"
       ? `开始中${".".repeat(captureStartDots + 1)}`
@@ -212,14 +219,11 @@ export default function App() {
     setError(null);
     try {
       if (speaker === "interviewer") {
-        await handleCommittedTurn(
-          {
-            speaker,
-            text,
-            timestamp: formatTime(),
-          },
-          { forceAnswer: true },
-        );
+        await handleCommittedTurn({
+          speaker,
+          text,
+          timestamp: formatTime(),
+        });
       } else {
         appendTurn({ speaker, text, timestamp: formatTime() });
       }
@@ -254,6 +258,51 @@ export default function App() {
       setCaptureStartState("starting");
       const started = await startInterviewCapture();
       setCaptureStartState(started ? "started" : "idle");
+    }
+  }
+
+  async function handleGenerateAnswer() {
+    if (!canGenerateAnswer) {
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const liveInterviewerText = bufferRef.current.interviewer.trim();
+      if (liveInterviewerText && shouldGenerateAnswerCard(liveInterviewerText, false)) {
+        const pendingTurn: TranscriptTurn = {
+          speaker: "interviewer",
+          text: liveInterviewerText,
+          timestamp: formatTime(),
+        };
+
+        bufferRef.current = { ...bufferRef.current, interviewer: "" };
+        setBuffers(bufferRef.current);
+        activeSpeakerRef.current = null;
+        resetSpeakerSegments("interviewer");
+
+        const timerId = flushTimersRef.current.interviewer;
+        if (timerId) {
+          window.clearTimeout(timerId);
+          flushTimersRef.current.interviewer = undefined;
+        }
+
+        await handleCommittedTurn(pendingTurn, { forceAnswer: true });
+        return;
+      }
+
+      const latestInterviewer = getLatestInterviewerTurnContext(historyRef.current, true);
+      if (!latestInterviewer) {
+        setError("还没有可生成回答的面试官问题。");
+        return;
+      }
+
+      await requestCoach(latestInterviewer.turn, latestInterviewer.historyBeforeTurn);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "生成回答失败");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -653,30 +702,46 @@ export default function App() {
 
   async function handleCommittedTurn(turn: TranscriptTurn, options: HandleTurnOptions = {}) {
     const historyBeforeTurn = historyRef.current;
-    appendTurn(turn);
-    if (turn.speaker === "interviewer" && shouldGenerateAnswerCard(turn.text, options.forceAnswer === true)) {
-      await requestCoach(turn, historyBeforeTurn);
+    const prepared = appendTurn(turn);
+    if (prepared.turn && prepared.turn.speaker === "interviewer" && options.forceAnswer === true) {
+      await requestCoach(prepared.turn, historyBeforeTurn);
     }
   }
 
-  function appendTurn(turn: TranscriptTurn) {
-    const previousTurn = historyRef.current[historyRef.current.length - 1];
-    const shouldMergeSpeakerTurn = previousTurn?.speaker === turn.speaker;
+  function appendTurn(turn: TranscriptTurn): PreparedTurn {
+    const preparedPunctuation = detachLeadingPunctuation(turn, historyRef.current);
+    if (preparedPunctuation.history) {
+      const clampedPreparedHistory = clampHistoryTurns(preparedPunctuation.history);
+      historyRef.current = clampedPreparedHistory;
+      setHistory(clampedPreparedHistory);
+    }
 
-    const nextHistory = shouldMergeSpeakerTurn
-      ? [
-          ...historyRef.current.slice(0, -1),
-          {
-            ...previousTurn,
-            text: mergeTranscriptText(previousTurn.text, turn.text),
-            timestamp: turn.timestamp ?? previousTurn.timestamp,
-          },
-        ]
-      : [...historyRef.current, turn];
+    if (!preparedPunctuation.turn) {
+      return { turn: null, punctuationAttached: true };
+    }
+
+    const normalizedTurn = preparedPunctuation.turn;
+    const previousTurn = historyRef.current[historyRef.current.length - 1];
+    const shouldMergeSpeakerTurn = previousTurn?.speaker === normalizedTurn.speaker;
+
+    let nextHistory: TranscriptTurn[];
+    if (shouldMergeSpeakerTurn) {
+      nextHistory = [
+        ...historyRef.current.slice(0, -1),
+        {
+          ...previousTurn,
+          text: mergeTranscriptText(previousTurn.text, normalizedTurn.text),
+          timestamp: normalizedTurn.timestamp ?? previousTurn.timestamp,
+        },
+      ];
+    } else {
+      nextHistory = [...historyRef.current, normalizedTurn];
+    }
 
     const clampedHistory = clampHistoryTurns(nextHistory);
     historyRef.current = clampedHistory;
     setHistory(clampedHistory);
+    return { turn: normalizedTurn, punctuationAttached: normalizedTurn.text !== turn.text };
   }
 
   async function requestCoach(turn: TranscriptTurn, currentHistory: TranscriptTurn[]) {
@@ -852,23 +917,35 @@ export default function App() {
                 disabled={captureActive.candidate || captureActive.interviewer}
               />
             </div>
-            <button
-              type="button"
-              className={`session-start-button panel-start-button ${captureStartState === "started" ? "active" : ""} ${captureStartState === "starting" ? "starting" : ""}`}
-              onClick={handleCaptureToggle}
-              aria-label={startButtonLabel}
-              title={startButtonLabel}
-              disabled={captureStartState === "starting"}
-            >
-              {startButtonLabel}
-            </button>
+            <div className="live-panel-actions">
+              <button
+                type="button"
+                className="session-start-button panel-start-button"
+                onClick={() => void handleGenerateAnswer()}
+                aria-label={loading ? "生成中..." : "生成回答"}
+                title={loading ? "生成中..." : "生成回答"}
+                disabled={!canGenerateAnswer}
+              >
+                {loading ? "生成中..." : "生成回答"}
+              </button>
+              <button
+                type="button"
+                className={`session-start-button panel-start-button ${captureStartState === "started" ? "active" : ""} ${captureStartState === "starting" ? "starting" : ""}`}
+                onClick={handleCaptureToggle}
+                aria-label={startButtonLabel}
+                title={startButtonLabel}
+                disabled={captureStartState === "starting"}
+              >
+                {startButtonLabel}
+              </button>
+            </div>
           </div>
 
           <div className="chat-stage">
             <div className="chat-list" ref={chatListRef}>
               {renderedHistory.map((item) => (
                 <div className={`chat-row ${item.speaker}`} key={item.key}>
-                  <article className="bubble">
+                  <article className={`bubble ${isMultiLineBubble(item.text) ? "multiline" : ""}`.trim()}>
                     {item.statusLabel ? <div className="bubble-meta">{item.statusLabel}</div> : null}
                     <p>{item.text}</p>
                   </article>
@@ -1385,6 +1462,23 @@ function shouldGenerateAnswerCard(text: string, forceAnswer: boolean) {
   );
 }
 
+function getLatestInterviewerTurnContext(history: TranscriptTurn[], requireQuestionLike = false) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const turn = history[index];
+    if (turn?.speaker !== "interviewer") {
+      continue;
+    }
+    if (requireQuestionLike && !shouldGenerateAnswerCard(turn.text, false)) {
+      continue;
+    }
+    return {
+      turn,
+      historyBeforeTurn: history.slice(0, index),
+    };
+  }
+  return null;
+}
+
 function findReusableAnswerCard(items: AnswerFeedItem[], text: string) {
   const lastItem = items.length ? items[items.length - 1] : null;
   if (!lastItem) {
@@ -1423,6 +1517,52 @@ function shouldHoldInterviewerBuffer(text: string) {
     return false;
   }
   return normalized.length < 24;
+}
+
+function isMultiLineBubble(text: string) {
+  const normalized = text.trim();
+  return normalized.includes("\n") || normalized.length > 34;
+}
+
+function detachLeadingPunctuation(turn: TranscriptTurn, history: TranscriptTurn[]) {
+  const text = turn.text.trimStart();
+  if (!text) {
+    return { turn: null, history: null as TranscriptTurn[] | null };
+  }
+
+  const punctuationMatch = text.match(/^[，。！？；：、,.!?;:）)】\]」』]+/u);
+  if (!punctuationMatch) {
+    return { turn: { ...turn, text }, history: null as TranscriptTurn[] | null };
+  }
+
+  const latestSpeakerIndex = findLatestSpeakerTurnIndex(history, turn.speaker);
+  if (latestSpeakerIndex < 0) {
+    return { turn: { ...turn, text }, history: null as TranscriptTurn[] | null };
+  }
+
+  const punctuation = punctuationMatch[0];
+  const remainder = text.slice(punctuation.length).trimStart();
+  const nextHistory = history.map((item, index) =>
+    index === latestSpeakerIndex
+      ? {
+          ...item,
+          text: `${item.text}${punctuation}`,
+        }
+      : item,
+  );
+  return {
+    turn: remainder ? { ...turn, text: remainder } : null,
+    history: nextHistory,
+  };
+}
+
+function findLatestSpeakerTurnIndex(history: TranscriptTurn[], speaker: Speaker) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index]?.speaker === speaker) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function mergeTranscriptText(left: string, right: string) {

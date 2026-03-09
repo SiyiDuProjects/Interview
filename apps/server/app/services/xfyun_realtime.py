@@ -37,7 +37,7 @@ async def proxy_xfyun_live_transcription(websocket: WebSocket, speaker: str) -> 
             {
                 "type": "ready",
                 "speaker": speaker,
-                "source": "xfyun-rtasr:autodialect",
+                "source": f"xfyun-asr-llm:{settings.xfyun_rtasr_lang}",
             }
         )
 
@@ -75,6 +75,8 @@ def build_xfyun_ws_url(session_id: str) -> str:
     }
     if settings.xfyun_rtasr_pd:
         params["pd"] = settings.xfyun_rtasr_pd
+    if settings.xfyun_rtasr_role_type:
+        params["role_type"] = str(settings.xfyun_rtasr_role_type)
 
     base_string = urlencode(sorted(params.items()), quote_via=quote)
     signature = base64.b64encode(
@@ -182,7 +184,33 @@ def _extract_xfyun_transcript(data: dict[str, Any]) -> str:
                 word = str(cw_item.get("w", "")).strip()
                 if word:
                     words.append(word)
-    return "".join(words).strip()
+    return _join_xfyun_tokens(words).strip()
+
+
+def _join_xfyun_tokens(words: list[str]) -> str:
+    if not words:
+        return ""
+
+    merged = words[0]
+    for word in words[1:]:
+        if _should_insert_space(merged, word):
+            merged = f"{merged} {word}"
+        else:
+            merged = f"{merged}{word}"
+    return merged
+
+
+def _should_insert_space(left: str, right: str) -> bool:
+    left_text = left.rstrip()
+    right_text = right.lstrip()
+    if not left_text or not right_text:
+        return False
+
+    return bool(_is_ascii_word_char(left_text[-1]) and _is_ascii_word_char(right_text[0]))
+
+
+def _is_ascii_word_char(char: str) -> bool:
+    return ("a" <= char.lower() <= "z") or ("0" <= char <= "9")
 
 
 def _beijing_now() -> datetime:

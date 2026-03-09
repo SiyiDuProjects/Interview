@@ -28,8 +28,6 @@ const USER_MEDIA_CONSTRAINTS: MediaStreamConstraints = {
 
 const TARGET_SAMPLE_RATE = 16000;
 const SCRIPT_BUFFER_SIZE = 1024;
-const SPEECH_HANGOVER_MS = 400;
-
 export async function requestCaptureStream(speaker: Speaker): Promise<MediaStream> {
   if (speaker === "candidate") {
     return navigator.mediaDevices.getUserMedia(USER_MEDIA_CONSTRAINTS);
@@ -57,8 +55,6 @@ export function startLocalAudioCapture(options: LocalAudioCaptureOptions): Audio
   gainNode.gain.value = 0;
 
   let stopped = false;
-  let speechActiveUntil = 0;
-
   processorNode.onaudioprocess = (event) => {
     if (stopped) {
       return;
@@ -74,14 +70,9 @@ export function startLocalAudioCapture(options: LocalAudioCaptureOptions): Audio
       sum += sample * sample;
     }
 
-    const rms = Math.sqrt(sum / input.length);
-    if (rms >= options.minLevel) {
-      speechActiveUntil = Date.now() + SPEECH_HANGOVER_MS;
-    }
-
-    if (Date.now() <= speechActiveUntil) {
-      options.onChunk(pcm.buffer.slice(0));
-    }
+    // Keep upstream realtime ASR fed with continuous audio, including silence,
+    // so word boundaries are detected without waiting for the next spoken token.
+    options.onChunk(pcm.buffer.slice(0));
   };
 
   sourceNode.connect(processorNode);
