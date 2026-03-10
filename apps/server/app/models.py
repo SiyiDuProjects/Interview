@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 Speaker = Literal["interviewer", "candidate"]
 GenerationMode = Literal["hybrid", "api_only"]
 FastModelChoice = Literal["gpt-5-mini", "gpt-5-nano", "gpt-5-dual"]
+AnswerScope = Literal["general", "innovation_ai", "canvasbot", "discordbot"]
 
 
 class TranscriptTurn(BaseModel):
@@ -30,6 +31,9 @@ class CoachRequest(BaseModel):
     context: CandidateContext = Field(default_factory=CandidateContext)
     generation_mode: GenerationMode = "hybrid"
     fast_model: FastModelChoice | None = None
+    answer_scope: AnswerScope = "general"
+    project_context_label: str = ""
+    project_context: str = ""
 
 
 class AnswerVariant(BaseModel):

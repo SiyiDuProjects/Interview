@@ -1,5 +1,6 @@
 ﻿export type Speaker = "interviewer" | "candidate";
 export type GenerationMode = "hybrid" | "api_only";
+export type AnswerScope = "general" | "innovation_ai" | "canvasbot" | "discordbot";
 
 export interface TranscriptTurn {
   speaker: Speaker;
@@ -53,4 +54,7 @@ export interface AnswerFeedItem extends CoachResponse {
   prompt: string;
   timestamp: string;
   createdAtMs?: number;
+  answerScope: AnswerScope;
+  answerScopeLabel: string;
+  projectContextLabel?: string;
 }

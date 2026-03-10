@@ -347,6 +347,16 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.answer-mode-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .live-panel-head::after {
@@ -641,6 +651,18 @@ button {
 
 .panel-start-button {
   align-self: center;
+}
+
+.answer-mode-button {
+  min-width: 104px;
+}
+
+.answer-mode-button.project {
+  background: #e7eefc;
+}
+
+.answer-mode-button.project:hover:not(:disabled) {
+  background: #d8e4fb;
 }
 
 .session-dock {
@@ -1171,6 +1193,26 @@ select:focus {
   color: var(--text);
 }
 
+.answer-scope-chip,
+.answer-scope-meta {
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.answer-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  font-weight: 600;
+}
+
+.answer-scope-meta {
+  margin-top: 8px;
+}
+
 .variant-block {
   margin-top: 16px;
   padding: 16px 18px;
@@ -1225,6 +1267,11 @@ select:focus {
 
 .variant-summary {
   margin-top: 8px;
+  font-size: 15px;
+  line-height: 1.68;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
 }
 
 ul {

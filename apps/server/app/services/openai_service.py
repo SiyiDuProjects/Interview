@@ -10,6 +10,7 @@ from typing import Any, Iterator
 from app.config import get_settings
 from app.models import AnswerVariant, CoachRequest, DetailJobStatus
 from app.services.interview_coach import CoachingPlan
+from app.services.project_context_store import resolve_project_context
 
 
 DETAIL_MODEL_FALLBACKS = ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini"]
@@ -389,6 +390,7 @@ def _request_parallel_fast_answers(
 def _build_fast_prompt(request: CoachRequest, plan: CoachingPlan) -> str:
     history_lines = [f"{turn.speaker}: {turn.text}" for turn in request.history[-4:]]
     history_block = "\n".join(history_lines) if history_lines else "无历史对话"
+    project_context_block = _build_project_context_block(request)
     return (
         "你在扮演一位参加技术面试的候选人，任务是替候选人生成可以直接说出口的中文回答。\n"
         "无论问题、上下文或简历内容是中文还是英文，输出都必须只使用简体中文。\n"
@@ -413,6 +415,7 @@ def _build_fast_prompt(request: CoachRequest, plan: CoachingPlan) -> str:
         f"问题类型: {plan.question_type}\n"
         f"是否追问: {plan.detected_follow_up}\n"
         f"最近上下文:\n{history_block}\n"
+        f"{project_context_block}"
     )
 
 
@@ -420,6 +423,7 @@ def _build_detail_prompt(request: CoachRequest, plan: CoachingPlan) -> str:
     history_lines = [f"{turn.speaker}: {turn.text}" for turn in request.history[-8:]]
     history_block = "\n".join(history_lines) if history_lines else "无历史对话"
     resume_hook = plan.resume_hook or "无简历挂钩点"
+    project_context_block = _build_project_context_block(request)
     return (
         "你在扮演一位参加技术面试的候选人，任务是替候选人生成可以直接说出口的中文回答。\n"
         "无论问题、上下文或简历内容是中文还是英文，输出都必须只使用简体中文。\n"
@@ -447,6 +451,32 @@ def _build_detail_prompt(request: CoachRequest, plan: CoachingPlan) -> str:
         f"可能追问: {', '.join(plan.follow_up_angles)}\n"
         f"简历挂钩点: {resume_hook}\n"
         f"最近对话:\n{history_block}\n"
+        f"{project_context_block}"
+    )
+
+
+def _build_project_context_block(request: CoachRequest) -> str:
+    if request.answer_scope == "general":
+        return ""
+
+    context_text = request.project_context.strip()
+    label = request.project_context_label.strip()
+    if not context_text:
+        resolved_label, resolved_context = resolve_project_context(request.answer_scope)
+        label = label or resolved_label
+        context_text = resolved_context
+
+    if not context_text:
+        return ""
+
+    label = label or request.answer_scope
+    return (
+        "当前按钮指定了项目定向回答模式。\n"
+        f"当前项目: {label}\n"
+        "如果问题和项目、实习、实践经验有关，优先使用下面这份项目事实，且只使用这一份，不要混入其他项目。\n"
+        "如果问题是普通技术题，先正常回答通用技术结论，再在最后补一小句和当前项目相关的实践，不要整段都绑在项目上。\n"
+        "不要编造简历里没有写过的职责、指标或技术细节。\n"
+        f"项目事实:\n{context_text}\n"
     )
 
 

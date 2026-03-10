@@ -8,6 +8,7 @@ import {
 import { joinChunk } from "./liveTranscript";
 import type {
   AnswerFeedItem,
+  AnswerScope,
   CandidateContext,
   CoachResponse,
   DetailJobStatus,
@@ -53,6 +54,7 @@ interface RenderedTranscriptTurn extends TranscriptTurn {
 
 interface HandleTurnOptions {
   forceAnswer?: boolean;
+  answerScope?: AnswerScope;
 }
 
 interface PreparedTurn {
@@ -74,6 +76,13 @@ interface PickerOption {
   description?: string;
 }
 
+interface AnswerScopeOption {
+  scope: AnswerScope;
+  label: string;
+  answerScopeLabel: string;
+  projectContextLabel?: string;
+}
+
 type ContextFileField = "resume" | "job_description" | "custom_notes";
 
 const FAST_MODEL_OPTIONS: PickerOption[] = [
@@ -85,6 +94,32 @@ const FAST_MODEL_OPTIONS: PickerOption[] = [
 const RECOGNITION_LOCALE_OPTIONS: PickerOption[] = [
   { value: "zh", label: "中文", description: "讯飞实时识别" },
   { value: "en", label: "English", description: "Deepgram transcription" },
+];
+
+const ANSWER_SCOPE_OPTIONS: AnswerScopeOption[] = [
+  {
+    scope: "general",
+    label: "生成回答",
+    answerScopeLabel: "普通回答",
+  },
+  {
+    scope: "innovation_ai",
+    label: "Innovation AI",
+    answerScopeLabel: "Innovation AI",
+    projectContextLabel: "Innovation AI",
+  },
+  {
+    scope: "canvasbot",
+    label: "CanvasBot",
+    answerScopeLabel: "CanvasBot",
+    projectContextLabel: "AI Canvas Tracker",
+  },
+  {
+    scope: "discordbot",
+    label: "DiscordBot",
+    answerScopeLabel: "DiscordBot",
+    projectContextLabel: "UC Berkeley Course Knowledge & Enrollment Platform",
+  },
 ];
 
 export default function App() {
@@ -261,7 +296,7 @@ export default function App() {
     }
   }
 
-  async function handleGenerateAnswer() {
+  async function handleGenerateAnswer(answerScope: AnswerScope = "general") {
     if (!canGenerateAnswer) {
       return;
     }
@@ -270,7 +305,7 @@ export default function App() {
     setError(null);
     try {
       const liveInterviewerText = bufferRef.current.interviewer.trim();
-      if (liveInterviewerText && shouldGenerateAnswerCard(liveInterviewerText, false)) {
+      if (liveInterviewerText) {
         const pendingTurn: TranscriptTurn = {
           speaker: "interviewer",
           text: liveInterviewerText,
@@ -288,17 +323,17 @@ export default function App() {
           flushTimersRef.current.interviewer = undefined;
         }
 
-        await handleCommittedTurn(pendingTurn, { forceAnswer: true });
+        await handleCommittedTurn(pendingTurn, { forceAnswer: true, answerScope });
         return;
       }
 
-      const latestInterviewer = getLatestInterviewerTurnContext(historyRef.current, true);
+      const latestInterviewer = getLatestInterviewerTurnContext(historyRef.current, false);
       if (!latestInterviewer) {
         setError("还没有可生成回答的面试官问题。");
         return;
       }
 
-      await requestCoach(latestInterviewer.turn, latestInterviewer.historyBeforeTurn);
+      await requestCoach(latestInterviewer.turn, latestInterviewer.historyBeforeTurn, answerScope);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "生成回答失败");
     } finally {
@@ -704,7 +739,7 @@ export default function App() {
     const historyBeforeTurn = historyRef.current;
     const prepared = appendTurn(turn);
     if (prepared.turn && prepared.turn.speaker === "interviewer" && options.forceAnswer === true) {
-      await requestCoach(prepared.turn, historyBeforeTurn);
+      await requestCoach(prepared.turn, historyBeforeTurn, options.answerScope ?? "general");
     }
   }
 
@@ -744,7 +779,8 @@ export default function App() {
     return { turn: normalizedTurn, punctuationAttached: normalizedTurn.text !== turn.text };
   }
 
-  async function requestCoach(turn: TranscriptTurn, currentHistory: TranscriptTurn[]) {
+  async function requestCoach(turn: TranscriptTurn, currentHistory: TranscriptTurn[], answerScope: AnswerScope) {
+    const answerScopeOption = getAnswerScopeOption(answerScope);
     const result = await fetchWithTimeout(
       `${API_BASE_URL}/api/coach/respond`,
       {
@@ -756,6 +792,8 @@ export default function App() {
           context,
           generation_mode: "hybrid",
           fast_model: fastModel,
+          answer_scope: answerScopeOption.scope,
+          project_context_label: answerScopeOption.projectContextLabel ?? "",
         }),
       },
       COACH_REQUEST_TIMEOUT_MS,
@@ -766,14 +804,17 @@ export default function App() {
       throw new Error(`回答接口失败，状态码 ${result.status}`);
     }
 
-    const payload = (await result.json()) as CoachResponse;
-    const reusableCard = findReusableAnswerCard(answerItemsRef.current, turn.text);
+      const payload = (await result.json()) as CoachResponse;
+    const reusableCard = findReusableAnswerCard(answerItemsRef.current, turn.text, answerScope);
     const item: AnswerFeedItem = {
       ...payload,
       id: reusableCard?.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       prompt: turn.text,
       timestamp: turn.timestamp ?? formatTime(),
       createdAtMs: Date.now(),
+      answerScope,
+      answerScopeLabel: answerScopeOption.answerScopeLabel,
+      projectContextLabel: answerScopeOption.projectContextLabel,
     };
 
     if (reusableCard) {
@@ -918,16 +959,21 @@ export default function App() {
               />
             </div>
             <div className="live-panel-actions">
-              <button
-                type="button"
-                className="session-start-button panel-start-button"
-                onClick={() => void handleGenerateAnswer()}
-                aria-label={loading ? "生成中..." : "生成回答"}
-                title={loading ? "生成中..." : "生成回答"}
-                disabled={!canGenerateAnswer}
-              >
-                {loading ? "生成中..." : "生成回答"}
-              </button>
+              <div className="answer-mode-actions">
+                {ANSWER_SCOPE_OPTIONS.map((option) => (
+                  <button
+                    key={option.scope}
+                    type="button"
+                    className={`session-start-button panel-start-button answer-mode-button ${option.scope === "general" ? "default" : "project"}`}
+                    onClick={() => void handleGenerateAnswer(option.scope)}
+                    aria-label={loading ? "生成中..." : option.label}
+                    title={loading ? "生成中..." : option.label}
+                    disabled={!canGenerateAnswer}
+                  >
+                    {loading ? "生成中..." : option.label}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
                 className={`session-start-button panel-start-button ${captureStartState === "started" ? "active" : ""} ${captureStartState === "starting" ? "starting" : ""}`}
@@ -987,9 +1033,11 @@ export default function App() {
                 <article className="answer-card" key={item.id}>
                   <div className="answer-card-head">
                     <span className="timestamp">{item.timestamp}</span>
+                    <span className="answer-scope-chip">{item.answerScopeLabel}</span>
                   </div>
 
                   <p className="answer-prompt">问题：{item.prompt}</p>
+                  {item.projectContextLabel ? <p className="answer-scope-meta">项目上下文：{item.projectContextLabel}</p> : null}
 
                   <section className="variant-block fast">
                     <div className="variant-head">
@@ -1479,9 +1527,16 @@ function getLatestInterviewerTurnContext(history: TranscriptTurn[], requireQuest
   return null;
 }
 
-function findReusableAnswerCard(items: AnswerFeedItem[], text: string) {
+function getAnswerScopeOption(answerScope: AnswerScope) {
+  return ANSWER_SCOPE_OPTIONS.find((option) => option.scope === answerScope) ?? ANSWER_SCOPE_OPTIONS[0];
+}
+
+function findReusableAnswerCard(items: AnswerFeedItem[], text: string, answerScope: AnswerScope) {
   const lastItem = items.length ? items[items.length - 1] : null;
   if (!lastItem) {
+    return null;
+  }
+  if (lastItem.answerScope !== answerScope) {
     return null;
   }
 
