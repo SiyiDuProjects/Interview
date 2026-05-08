@@ -158,7 +158,7 @@ class InterviewFlowTests(unittest.TestCase):
     def test_transcription_endpoint_uses_openai_stt(self) -> None:
         with patch("app.main.transcribe_audio_chunk", return_value="数据库 索引 测试"), patch(
             "app.main.get_transcription_source",
-            return_value="openai-stt:gpt-4o-mini-transcribe",
+            return_value="openai-stt:gpt-4o-transcribe",
         ):
             response = self.client.post(
                 "/api/transcribe/chunk",
@@ -170,7 +170,7 @@ class InterviewFlowTests(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["speaker"], "candidate")
         self.assertEqual(data["text"], "数据库 索引 测试")
-        self.assertEqual(data["source"], "openai-stt:gpt-4o-mini-transcribe")
+        self.assertEqual(data["source"], "openai-stt:gpt-4o-transcribe")
 
 
 if __name__ == "__main__":

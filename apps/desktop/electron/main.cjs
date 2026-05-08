@@ -1,16 +1,30 @@
 const path = require("node:path");
 const os = require("node:os");
 const http = require("node:http");
+const net = require("node:net");
+const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 const { app, BrowserWindow, desktopCapturer, session, shell } = require("electron");
 
 const WINDOW_TITLE = "Sage";
-const API_PORT = 8000;
-const API_HEALTH_URL = `http://127.0.0.1:${API_PORT}/health`;
+const DEFAULT_API_PORT = 8000;
+const FALLBACK_API_PORTS = [8000, 8001];
 const API_START_TIMEOUT_MS = 15000;
+const REQUIRED_REALTIME_PROTOCOL = "realtime-text-events-v2";
 
 const writableRoot = path.join(os.tmpdir(), "interview-copilot-electron");
 let apiProcess = null;
+let apiPort = DEFAULT_API_PORT;
+
+function configuredApiPort() {
+  const configuredUrl = process.env.INTERVIEW_API_BASE_URL || process.env.VITE_API_BASE_URL || "";
+  const match = configuredUrl.match(/127\.0\.0\.1:(\d+)|localhost:(\d+)/);
+  if (match) {
+    return Number(match[1] || match[2]);
+  }
+  const configuredPort = Number(process.env.INTERVIEW_API_PORT || "");
+  return Number.isFinite(configuredPort) && configuredPort > 0 ? configuredPort : null;
+}
 
 app.setPath("userData", writableRoot);
 app.commandLine.appendSwitch("disk-cache-dir", path.join(writableRoot, "cache"));
@@ -21,16 +35,48 @@ function getRendererUrl() {
   return arg ? arg.slice("--renderer-url=".length) : "";
 }
 
-function isApiHealthy() {
+function readApiHealth(port) {
   return new Promise((resolve) => {
-    const request = http.get(API_HEALTH_URL, (response) => {
-      response.resume();
-      resolve(response.statusCode === 200);
+    const request = http.get(`http://127.0.0.1:${port}/health`, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+      });
+      response.on("end", () => {
+        if (response.statusCode !== 200) {
+          resolve(null);
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch {
+          resolve(null);
+        }
+      });
     });
-    request.on("error", () => resolve(false));
+    request.on("error", () => resolve(null));
     request.setTimeout(1200, () => {
       request.destroy();
-      resolve(false);
+      resolve(null);
+    });
+  });
+}
+
+async function isApiCompatible(port) {
+  const health = await readApiHealth(port);
+  return Boolean(health?.status === "ok" && health?.realtime_protocol === REQUIRED_REALTIME_PROTOCOL);
+}
+
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolve(port));
     });
   });
 }
@@ -38,7 +84,7 @@ function isApiHealthy() {
 async function waitForApiReady(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await isApiHealthy()) {
+    if (await isApiCompatible(apiPort)) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -47,16 +93,28 @@ async function waitForApiReady(timeoutMs) {
 }
 
 async function ensureApiServer() {
-  if (await isApiHealthy()) {
-    return;
+  const candidatePorts = [configuredApiPort(), ...FALLBACK_API_PORTS].filter(
+    (port, index, ports) => typeof port === "number" && ports.indexOf(port) === index,
+  );
+
+  for (const port of candidatePorts) {
+    if (await isApiCompatible(port)) {
+      apiPort = port;
+      process.env.INTERVIEW_API_BASE_URL = `http://127.0.0.1:${apiPort}`;
+      return;
+    }
   }
 
-  const pythonCommand = process.env.INTERVIEW_PYTHON || "python";
+  apiPort = await findFreePort();
+  process.env.INTERVIEW_API_BASE_URL = `http://127.0.0.1:${apiPort}`;
+
   const serverDir = path.join(__dirname, "..", "..", "server");
+  const localPython = path.join(serverDir, ".venv", "Scripts", "python.exe");
+  const pythonCommand = process.env.INTERVIEW_PYTHON || (fs.existsSync(localPython) ? localPython : "python");
 
   apiProcess = spawn(
     pythonCommand,
-    ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(API_PORT)],
+    ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(apiPort)],
     {
       cwd: serverDir,
       stdio: "pipe",
@@ -174,7 +232,6 @@ async function createMainWindow() {
 
   if (rendererUrl) {
     await mainWindow.loadURL(rendererUrl);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
     return;
   }
 

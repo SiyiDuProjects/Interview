@@ -16,6 +16,7 @@ from app.services.openai_service import (
     start_detail_job,
     stream_detail_events,
 )
+from app.services.openai_realtime import OpenAIRealtimeError, proxy_realtime_interview
 from app.services.xfyun_realtime import XfyunRealtimeError, proxy_xfyun_live_transcription
 from app.services.transcription_service import (
     TranscriptionError,
@@ -23,9 +24,13 @@ from app.services.transcription_service import (
     transcribe_audio_chunk,
     warmup_transcription_model,
 )
+from app.config import get_settings
 
 
-app = FastAPI(title="Interview Copilot API", version="0.3.0")
+API_VERSION = "0.3.1"
+REALTIME_PROTOCOL_VERSION = "realtime-text-events-v2"
+
+app = FastAPI(title="Interview Copilot API", version=API_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,7 +49,15 @@ def warmup_local_services() -> None:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "version": API_VERSION,
+        "realtime_protocol": REALTIME_PROTOCOL_VERSION,
+        "realtime_model": settings.openai_realtime_model,
+        "realtime_transcription_model": settings.openai_realtime_transcription_model,
+        "realtime_reasoning_effort": settings.openai_realtime_reasoning_effort,
+    }
 
 
 def _warmup_transcription_worker() -> None:
@@ -128,6 +141,20 @@ async def transcribe_stream(websocket: WebSocket, speaker: str) -> None:
         await websocket.send_json({"type": "error", "speaker": speaker, "detail": str(exc)})
         await websocket.close(code=1011)
     except DeepgramRealtimeError as exc:
+        await websocket.send_json({"type": "error", "speaker": speaker, "detail": str(exc)})
+        await websocket.close(code=1011)
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "speaker": speaker, "detail": str(exc)})
+        await websocket.close(code=1011)
+
+
+@app.websocket("/ws/realtime/interview/{speaker}")
+async def realtime_interview_stream(websocket: WebSocket, speaker: str) -> None:
+    try:
+        await proxy_realtime_interview(websocket, speaker)
+    except WebSocketDisconnect:
+        return
+    except OpenAIRealtimeError as exc:
         await websocket.send_json({"type": "error", "speaker": speaker, "detail": str(exc)})
         await websocket.close(code=1011)
     except Exception as exc:

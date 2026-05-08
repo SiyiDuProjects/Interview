@@ -18,6 +18,21 @@ def resolve_project_context(answer_scope: AnswerScope) -> tuple[str, str]:
     if not filename:
         return "", ""
 
+    return _read_project_context(label, filename)
+
+
+def resolve_all_project_contexts() -> list[tuple[str, str]]:
+    contexts: list[tuple[str, str]] = []
+    for scope, (label, filename) in PROJECT_CONTEXT_FILES.items():
+        if scope == "general" or not filename:
+            continue
+        resolved_label, text = _read_project_context(label, filename)
+        if text:
+            contexts.append((resolved_label, text))
+    return contexts
+
+
+def _read_project_context(label: str, filename: str) -> tuple[str, str]:
     path = _project_context_root() / filename
     if not path.exists():
         return label, ""

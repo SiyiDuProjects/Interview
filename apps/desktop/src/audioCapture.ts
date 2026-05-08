@@ -1,6 +1,7 @@
 import { type Speaker } from "./types";
 
 export interface AudioCaptureHandle {
+  snapshot?: () => Promise<string>;
   stop: () => void;
 }
 
@@ -26,7 +27,7 @@ const USER_MEDIA_CONSTRAINTS: MediaStreamConstraints = {
   video: false,
 };
 
-const TARGET_SAMPLE_RATE = 16000;
+const TARGET_SAMPLE_RATE = 24000;
 const SCRIPT_BUFFER_SIZE = 1024;
 export async function requestCaptureStream(speaker: Speaker): Promise<MediaStream> {
   if (speaker === "candidate") {
@@ -79,7 +80,13 @@ export function startLocalAudioCapture(options: LocalAudioCaptureOptions): Audio
   processorNode.connect(gainNode);
   gainNode.connect(audioContext.destination);
 
+  const videoTracks = options.stream.getVideoTracks();
+
   return {
+    snapshot:
+      videoTracks.length > 0
+        ? () => captureVideoFrameDataUrl(new MediaStream(videoTracks))
+        : undefined,
     stop: () => {
       if (stopped) {
         return;
@@ -92,6 +99,30 @@ export function startLocalAudioCapture(options: LocalAudioCaptureOptions): Audio
       void audioContext.close();
     },
   };
+}
+
+async function captureVideoFrameDataUrl(stream: MediaStream): Promise<string> {
+  const video = document.createElement("video");
+  video.srcObject = stream;
+  video.muted = true;
+  await video.play();
+
+  try {
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("无法创建截图画布。");
+    }
+    context.drawImage(video, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  } finally {
+    video.pause();
+    video.srcObject = null;
+  }
 }
 
 export function getCaptureLabel(speaker: Speaker): string {

@@ -9,10 +9,16 @@ from pathlib import Path
 class Settings:
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
+    openai_realtime_model: str = "gpt-realtime-2"
+    openai_realtime_transcription_model: str = "gpt-realtime-whisper"
+    openai_realtime_reasoning_effort: str = "low"
+    openai_code_model: str = "gpt-5.5"
+    openai_code_reasoning_effort: str = "high"
+    openai_code_timeout_seconds: float = 45.0
     openai_fast_model: str = "gpt-5-mini"
     openai_model: str = "gpt-4.1-mini"
     openai_timeout_seconds: float = 12.0
-    openai_transcription_model: str = "gpt-4o-mini-transcribe"
+    openai_transcription_model: str = "gpt-4o-transcribe"
     openai_transcription_timeout_seconds: float = 20.0
     deepgram_api_key: str = ""
     deepgram_ws_url: str = "wss://api.deepgram.com/v1/listen"
@@ -58,11 +64,16 @@ def _load_dotenv() -> None:
 def get_settings() -> Settings:
     _load_dotenv()
     timeout_value = os.getenv("OPENAI_TIMEOUT_SECONDS", "12")
+    code_timeout_value = os.getenv("OPENAI_CODE_TIMEOUT_SECONDS", "45")
     transcription_timeout_value = os.getenv("OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS", "20")
     try:
         timeout_seconds = float(timeout_value)
     except ValueError:
         timeout_seconds = 12.0
+    try:
+        code_timeout_seconds = float(code_timeout_value)
+    except ValueError:
+        code_timeout_seconds = 45.0
     try:
         transcription_timeout_seconds = float(transcription_timeout_value)
     except ValueError:
@@ -100,11 +111,21 @@ def get_settings() -> Settings:
     return Settings(
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
+        openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2").strip() or "gpt-realtime-2",
+        openai_realtime_transcription_model=os.getenv(
+            "OPENAI_REALTIME_TRANSCRIPTION_MODEL",
+            "gpt-realtime-whisper",
+        ).strip()
+        or "gpt-realtime-whisper",
+        openai_realtime_reasoning_effort=os.getenv("OPENAI_REALTIME_REASONING_EFFORT", "low").strip() or "low",
+        openai_code_model=os.getenv("OPENAI_CODE_MODEL", "gpt-5.5").strip() or "gpt-5.5",
+        openai_code_reasoning_effort=os.getenv("OPENAI_CODE_REASONING_EFFORT", "high").strip() or "high",
+        openai_code_timeout_seconds=code_timeout_seconds,
         openai_fast_model=os.getenv("OPENAI_FAST_MODEL", "gpt-5-mini").strip() or "gpt-5-mini",
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini",
         openai_timeout_seconds=timeout_seconds,
-        openai_transcription_model=os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip()
-        or "gpt-4o-mini-transcribe",
+        openai_transcription_model=os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-transcribe").strip()
+        or "gpt-4o-transcribe",
         openai_transcription_timeout_seconds=transcription_timeout_seconds,
         deepgram_api_key=os.getenv("DEEPGRAM_API_KEY", "").strip(),
         deepgram_ws_url=os.getenv("DEEPGRAM_WS_URL", "wss://api.deepgram.com/v1/listen").strip()

@@ -1,6 +1,4 @@
-﻿export type Speaker = "interviewer" | "candidate";
-export type GenerationMode = "hybrid" | "api_only";
-export type AnswerScope = "general" | "innovation_ai" | "canvasbot" | "discordbot";
+export type Speaker = "interviewer" | "candidate";
 
 export interface TranscriptTurn {
   speaker: Speaker;
@@ -16,45 +14,10 @@ export interface CandidateContext {
   custom_notes: string;
 }
 
-export interface AnswerVariant {
-  label: string;
-  short_answer: string;
-  talking_points: string[];
-  source: string;
-  ready: boolean;
-  elapsed_ms?: number | null;
-}
-
-export interface CoachResponse {
-  topic: string;
-  question_type: string;
-  detected_follow_up: boolean;
-  fast_answer: AnswerVariant;
-  fast_answer_alternatives?: AnswerVariant[];
-  deep_answer: AnswerVariant;
-  follow_up_angles: string[];
-  resume_hook?: string | null;
-  context_summary: string;
-  confidence: number;
-  detail_job_id?: string | null;
-}
-
-export type FastModelChoice = "gpt-5-mini" | "gpt-5-nano" | "gpt-5-dual";
-
-export interface DetailJobStatus {
-  job_id: string;
-  ready: boolean;
-  version: number;
-  answer?: AnswerVariant | null;
-  error?: string | null;
-}
-
-export interface AnswerFeedItem extends CoachResponse {
+export interface RealtimeAnswer {
   id: string;
-  prompt: string;
+  text: string;
+  status: "pending" | "streaming" | "done" | "error";
   timestamp: string;
-  createdAtMs?: number;
-  answerScope: AnswerScope;
-  answerScopeLabel: string;
-  projectContextLabel?: string;
+  detail?: string;
 }

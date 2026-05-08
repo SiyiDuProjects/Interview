@@ -4,5 +4,6 @@ interface Window {
   interviewDesktop?: {
     isElectron: boolean;
     platform: string;
+    apiBaseUrl?: string;
   };
 }

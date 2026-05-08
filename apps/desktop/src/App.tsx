@@ -7,17 +7,16 @@ import {
 } from "./audioCapture";
 import { joinChunk } from "./liveTranscript";
 import type {
-  AnswerFeedItem,
-  AnswerScope,
   CandidateContext,
-  CoachResponse,
-  DetailJobStatus,
-  FastModelChoice,
+  RealtimeAnswer,
   Speaker,
   TranscriptTurn,
 } from "./types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE_URL =
+  window.interviewDesktop?.apiBaseUrl ||
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://127.0.0.1:8000";
 const AUTO_FLUSH_MS: Record<Speaker, number> = {
   interviewer: 4200,
   candidate: 2200,
@@ -30,11 +29,9 @@ const CAPTURE_MIN_LEVEL: Record<Speaker, number> = {
   interviewer: 0.012,
   candidate: 0.006,
 };
-const ANSWER_CARD_REUSE_WINDOW_MS = 12000;
-const COACH_REQUEST_TIMEOUT_MS = 15000;
 const MIN_AUDIO_CHUNK_BYTES = 2048;
 const MAX_HISTORY_TURNS = 100;
-const MAX_ANSWER_FEED_ITEMS = 24;
+const MAX_REALTIME_ANSWER_ITEMS = 32;
 const SOCKET_RECONNECT_DELAYS_MS = [1000, 2000, 5000];
 
 const initialContext: CandidateContext = {
@@ -52,11 +49,6 @@ interface RenderedTranscriptTurn extends TranscriptTurn {
   statusLabel?: string;
 }
 
-interface HandleTurnOptions {
-  forceAnswer?: boolean;
-  answerScope?: AnswerScope;
-}
-
 interface PreparedTurn {
   turn: TranscriptTurn | null;
   punctuationAttached: boolean;
@@ -65,69 +57,22 @@ interface PreparedTurn {
 interface RealtimeMessage {
   type?: string;
   text?: string;
+  delta?: string;
   detail?: string;
+  request_id?: string;
+  reason?: string;
+  status?: RealtimeAnswer["status"];
   is_final?: boolean;
   speech_final?: boolean;
-}
-
-interface PickerOption {
-  value: string;
-  label: string;
-  description?: string;
-}
-
-interface AnswerScopeOption {
-  scope: AnswerScope;
-  label: string;
-  answerScopeLabel: string;
-  projectContextLabel?: string;
+  speaker?: Speaker;
 }
 
 type ContextFileField = "resume" | "job_description" | "custom_notes";
 
-const FAST_MODEL_OPTIONS: PickerOption[] = [
-  { value: "gpt-5-mini", label: "GPT-5 mini", description: "默认低延迟，适合实时快答" },
-  { value: "gpt-5-nano", label: "GPT-5 nano", description: "更轻更快，适合极简回答" },
-  { value: "gpt-5-dual", label: "mini + nano", description: "双路并发，兼顾稳定和速度" },
-];
-
-const RECOGNITION_LOCALE_OPTIONS: PickerOption[] = [
-  { value: "zh", label: "中文", description: "讯飞实时识别" },
-  { value: "en", label: "English", description: "Deepgram transcription" },
-];
-
-const ANSWER_SCOPE_OPTIONS: AnswerScopeOption[] = [
-  {
-    scope: "general",
-    label: "生成回答",
-    answerScopeLabel: "普通回答",
-  },
-  {
-    scope: "innovation_ai",
-    label: "Innovation AI",
-    answerScopeLabel: "Innovation AI",
-    projectContextLabel: "Innovation AI",
-  },
-  {
-    scope: "canvasbot",
-    label: "CanvasBot",
-    answerScopeLabel: "CanvasBot",
-    projectContextLabel: "AI Canvas Tracker",
-  },
-  {
-    scope: "discordbot",
-    label: "DiscordBot",
-    answerScopeLabel: "DiscordBot",
-    projectContextLabel: "UC Berkeley Course Knowledge & Enrollment Platform",
-  },
-];
-
 export default function App() {
   const [context, setContext] = useState<CandidateContext>(initialContext);
   const [history, setHistory] = useState<TranscriptTurn[]>(initialHistory);
-  const [answerFeed, setAnswerFeed] = useState<AnswerFeedItem[]>([]);
-  const [recognitionLocale, setRecognitionLocale] = useState<"zh" | "en">("zh");
-  const [fastModel, setFastModel] = useState<FastModelChoice>("gpt-5-mini");
+  const [realtimeAnswers, setRealtimeAnswers] = useState<RealtimeAnswer[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [captureStartState, setCaptureStartState] = useState<"idle" | "starting" | "started">("idle");
   const [captureStartDots, setCaptureStartDots] = useState(0);
@@ -135,6 +80,10 @@ export default function App() {
   const [selectedSpeaker, setSelectedSpeaker] = useState<Speaker>("interviewer");
   const [buffers, setBuffers] = useState<Record<Speaker, string>>({ interviewer: "", candidate: "" });
   const [captureActive, setCaptureActive] = useState<Record<Speaker, boolean>>({ interviewer: false, candidate: false });
+  const [realtimeSocketActive, setRealtimeSocketActive] = useState<Record<Speaker, boolean>>({
+    interviewer: false,
+    candidate: false,
+  });
   const [captureMessage, setCaptureMessage] = useState<Record<Speaker, string>>({
     interviewer: "待机",
     candidate: "待机",
@@ -144,15 +93,19 @@ export default function App() {
 
   const answerFeedRef = useRef<HTMLDivElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
-  const answerItemsRef = useRef<AnswerFeedItem[]>([]);
+  const realtimeAnswersRef = useRef<RealtimeAnswer[]>([]);
+  const activeRealtimeAnswerIdRef = useRef<string | null>(null);
   const historyRef = useRef<TranscriptTurn[]>(initialHistory);
+  const captureMessageRef = useRef<Record<Speaker, string>>({
+    interviewer: "待机",
+    candidate: "待机",
+  });
   const bufferRef = useRef<Record<Speaker, string>>({ interviewer: "", candidate: "" });
   const speechSegmentRef = useRef<Record<Speaker, { finalized: string; interim: string }>>({
     interviewer: { finalized: "", interim: "" },
     candidate: { finalized: "", interim: "" },
   });
   const activeSpeakerRef = useRef<Speaker | null>(null);
-  const streamControllersRef = useRef<Map<string, AbortController>>(new Map());
   const transcriptionSocketRef = useRef<Partial<Record<Speaker, WebSocket>>>({});
   const flushTimersRef = useRef<Partial<Record<Speaker, number>>>({});
   const processingQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -160,12 +113,14 @@ export default function App() {
   const reconnectTimersRef = useRef<Partial<Record<Speaker, number>>>({});
   const reconnectAttemptsRef = useRef<Record<Speaker, number>>({ interviewer: 0, candidate: 0 });
   const manualStopRef = useRef<Record<Speaker, boolean>>({ interviewer: false, candidate: false });
-  const recognitionLocaleRef = useRef<"zh" | "en">(recognitionLocale);
+  const contextRef = useRef<CandidateContext>(initialContext);
 
   const renderedHistory = useMemo(() => buildRenderedHistory(history, buffers), [history, buffers]);
-  const sessionOnline = captureActive.candidate || captureActive.interviewer;
-  const canGenerateAnswer =
-    !loading && (Boolean(buffers.interviewer.trim()) || history.some((item) => item.speaker === "interviewer"));
+  const sessionOnline =
+    captureActive.candidate ||
+    captureActive.interviewer ||
+    realtimeSocketActive.candidate ||
+    realtimeSocketActive.interviewer;
   const startButtonLabel =
     captureStartState === "starting"
       ? `开始中${".".repeat(captureStartDots + 1)}`
@@ -178,12 +133,16 @@ export default function App() {
   }, [history]);
 
   useEffect(() => {
-    answerItemsRef.current = answerFeed;
-  }, [answerFeed]);
+    captureMessageRef.current = captureMessage;
+  }, [captureMessage]);
 
   useEffect(() => {
-    recognitionLocaleRef.current = recognitionLocale;
-  }, [recognitionLocale]);
+    realtimeAnswersRef.current = realtimeAnswers;
+  }, [realtimeAnswers]);
+
+  useEffect(() => {
+    contextRef.current = context;
+  }, [context]);
 
   useEffect(() => {
     if (captureStartState !== "starting") {
@@ -218,7 +177,7 @@ export default function App() {
     if (container) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [answerFeed]);
+  }, [realtimeAnswers]);
 
   useEffect(() => {
     const container = chatListRef.current;
@@ -229,7 +188,6 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      streamControllersRef.current.forEach((controller) => controller.abort());
       stopInterviewCapture();
       Object.values(flushTimersRef.current).forEach((timerId) => {
         if (timerId) {
@@ -253,13 +211,13 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
+      const socket = await ensureRealtimeSocket(speaker);
       if (speaker === "interviewer") {
-        await handleCommittedTurn({
-          speaker,
-          text,
-          timestamp: formatTime(),
-        });
+        beginPendingRealtimeAnswer("已发送到 Realtime，等待本次回复开始生成...");
+        socket.send(JSON.stringify({ type: "manual_text", text }));
+        appendTurn({ speaker, text, timestamp: formatTime() });
       } else {
+        socket.send(JSON.stringify({ type: "manual_text", text }));
         appendTurn({ speaker, text, timestamp: formatTime() });
       }
       setInput("");
@@ -296,51 +254,6 @@ export default function App() {
     }
   }
 
-  async function handleGenerateAnswer(answerScope: AnswerScope = "general") {
-    if (!canGenerateAnswer) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    try {
-      const liveInterviewerText = bufferRef.current.interviewer.trim();
-      if (liveInterviewerText) {
-        const pendingTurn: TranscriptTurn = {
-          speaker: "interviewer",
-          text: liveInterviewerText,
-          timestamp: formatTime(),
-        };
-
-        bufferRef.current = { ...bufferRef.current, interviewer: "" };
-        setBuffers(bufferRef.current);
-        activeSpeakerRef.current = null;
-        resetSpeakerSegments("interviewer");
-
-        const timerId = flushTimersRef.current.interviewer;
-        if (timerId) {
-          window.clearTimeout(timerId);
-          flushTimersRef.current.interviewer = undefined;
-        }
-
-        await handleCommittedTurn(pendingTurn, { forceAnswer: true, answerScope });
-        return;
-      }
-
-      const latestInterviewer = getLatestInterviewerTurnContext(historyRef.current, false);
-      if (!latestInterviewer) {
-        setError("还没有可生成回答的面试官问题。");
-        return;
-      }
-
-      await requestCoach(latestInterviewer.turn, latestInterviewer.historyBeforeTurn, answerScope);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "生成回答失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function importContextFile(field: ContextFileField, fileList: FileList | null) {
     const file = fileList?.[0];
     if (!file) {
@@ -373,11 +286,10 @@ export default function App() {
       return true;
     }
 
-    let socket: WebSocket | null = null;
     try {
       manualStopRef.current[speaker] = false;
       clearReconnectTimer(speaker);
-      socket = await openRealtimeTranscriptionSocket(speaker, recognitionLocale);
+      await ensureRealtimeSocket(speaker);
       const stream = await requestCaptureStream(speaker);
       const handle = startLocalAudioCapture({
         stream,
@@ -386,22 +298,18 @@ export default function App() {
         onChunk: (chunk) => sendAudioChunk(speaker, chunk),
       });
 
-      transcriptionSocketRef.current[speaker] = socket;
       captureHandlesRef.current[speaker] = handle;
       reconnectAttemptsRef.current[speaker] = 0;
       setCaptureActive((current) => ({ ...current, [speaker]: true }));
+      captureMessageRef.current = { ...captureMessageRef.current, [speaker]: "监听中" };
       setCaptureMessage((current) => ({
         ...current,
         [speaker]: "监听中",
       }));
       return true;
     } catch (captureError) {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "close" }));
-        socket.close();
-      }
-      delete transcriptionSocketRef.current[speaker];
       const message = captureError instanceof Error ? captureError.message : "音频采集启动失败";
+      captureMessageRef.current = { ...captureMessageRef.current, [speaker]: message };
       setCaptureMessage((current) => ({ ...current, [speaker]: message }));
       return false;
     }
@@ -417,15 +325,17 @@ export default function App() {
     const systemStarted = await startSpeakerCapture("interviewer");
 
     if (!micStarted && !systemStarted) {
-      setError("麦克风和系统音频都没有启动成功。");
+      setError(
+        `麦克风和系统音频都没有启动成功。麦克风：${captureMessageRef.current.candidate}；系统音频：${captureMessageRef.current.interviewer}`,
+      );
       return false;
     }
     if (micStarted && !systemStarted) {
-      setError("麦克风已启动，但系统音频启动失败。");
+      setError(`麦克风已启动，但系统音频启动失败：${captureMessageRef.current.interviewer}`);
       return true;
     }
     if (!micStarted && systemStarted) {
-      setError("系统音频已启动，但麦克风启动失败。");
+      setError(`系统音频已启动，但麦克风启动失败：${captureMessageRef.current.candidate}`);
       return true;
     }
 
@@ -455,6 +365,7 @@ export default function App() {
       socket.close();
     }
     delete transcriptionSocketRef.current[speaker];
+    setRealtimeSocketActive((current) => ({ ...current, [speaker]: false }));
     setCaptureActive((current) => ({ ...current, [speaker]: false }));
     setCaptureMessage((current) => ({
       ...current,
@@ -464,10 +375,10 @@ export default function App() {
     resetSpeakerSegments(speaker);
   }
 
-  async function openRealtimeTranscriptionSocket(speaker: Speaker, locale: "zh" | "en") {
+  async function openRealtimeTranscriptionSocket(speaker: Speaker) {
     return await new Promise<WebSocket>((resolve, reject) => {
       const socket = new WebSocket(
-        `${getRealtimeSocketBaseUrl(API_BASE_URL)}/ws/transcribe/${speaker}?locale=${locale}`,
+        `${getRealtimeSocketBaseUrl(API_BASE_URL)}/ws/realtime/interview/${speaker}`,
       );
       let resolved = false;
 
@@ -477,6 +388,7 @@ export default function App() {
       }, 10000);
 
       socket.addEventListener("open", () => {
+        socket.send(JSON.stringify(buildRealtimeStartPayload()));
         setCaptureMessage((current) => ({
           ...current,
           [speaker]: "连接中",
@@ -500,6 +412,7 @@ export default function App() {
             resolved = true;
             window.clearTimeout(timeoutId);
             reconnectAttemptsRef.current[speaker] = 0;
+            setRealtimeSocketActive((current) => ({ ...current, [speaker]: true }));
             resolve(socket);
           }
           return;
@@ -520,6 +433,7 @@ export default function App() {
       socket.addEventListener("close", () => {
         if (transcriptionSocketRef.current[speaker] === socket) {
           delete transcriptionSocketRef.current[speaker];
+          setRealtimeSocketActive((current) => ({ ...current, [speaker]: false }));
         }
         if (resolved && captureHandlesRef.current[speaker] && !manualStopRef.current[speaker]) {
           scheduleSocketReconnect(speaker);
@@ -557,7 +471,7 @@ export default function App() {
     }
 
     try {
-      const socket = await openRealtimeTranscriptionSocket(speaker, recognitionLocaleRef.current);
+      const socket = await openRealtimeTranscriptionSocket(speaker);
       if (manualStopRef.current[speaker] || !captureHandlesRef.current[speaker]) {
         socket.close();
         return;
@@ -594,6 +508,41 @@ export default function App() {
       setCaptureMessage((current) => ({
         ...current,
         [speaker]: detail,
+      }));
+      markRealtimeAnswerError(detail);
+      return;
+    }
+
+    if (payload.type === "screen_capture_request") {
+      void respondToScreenCaptureRequest(payload);
+      return;
+    }
+
+    if (payload.type === "answer_status") {
+      updateActiveRealtimeAnswer(payload.text ?? "Realtime 正在处理...", payload.status ?? "pending", payload.detail);
+      return;
+    }
+
+    if (payload.type === "answer_delta") {
+      appendRealtimeAnswerDelta(payload.delta ?? "");
+      return;
+    }
+
+    if (payload.type === "answer_done" || payload.type === "response_done") {
+      if (payload.type === "response_done" && payload.detail && payload.detail !== "completed") {
+        updateActiveRealtimeAnswer("本次回复没有返回可显示文本。", "error", payload.detail);
+        activeRealtimeAnswerIdRef.current = null;
+        return;
+      }
+      finishRealtimeAnswer(payload.text);
+      return;
+    }
+
+    if (payload.type === "context_update" && payload.text?.trim()) {
+      appendTurn({ speaker: "candidate", text: payload.text.trim(), timestamp: formatTime() });
+      setCaptureMessage((current) => ({
+        ...current,
+        candidate: `上下文：${truncatePreview(payload.text ?? "")}`,
       }));
       return;
     }
@@ -638,6 +587,202 @@ export default function App() {
       return;
     }
     socket.send(chunk);
+  }
+
+  function sendRealtimeControl(speaker: Speaker, payload: Record<string, unknown>) {
+    const socket = transcriptionSocketRef.current[speaker];
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    socket.send(JSON.stringify(payload));
+  }
+
+  function buildRealtimeStartPayload() {
+    return {
+      type: "start",
+      context: contextRef.current,
+      answer_scope: "general",
+      project_context_label: "",
+    };
+  }
+
+  function appendRealtimeAnswerDelta(delta: string) {
+    if (!delta) {
+      return;
+    }
+
+    const activeId = activeRealtimeAnswerIdRef.current;
+    if (!activeId) {
+      beginPendingRealtimeAnswer(delta, "streaming");
+      return;
+    }
+
+    updateRealtimeAnswers((current) =>
+      current.map((item) =>
+        item.id === activeId
+          ? {
+              ...item,
+              text: item.status === "pending" ? delta : `${item.text}${delta}`,
+              status: "streaming",
+              detail: undefined,
+            }
+          : item,
+      ),
+    );
+  }
+
+  function finishRealtimeAnswer(finalText?: string) {
+    const activeId = activeRealtimeAnswerIdRef.current;
+    if (!activeId) {
+      return;
+    }
+
+    const normalizedFinalText = finalText?.trim();
+    updateRealtimeAnswers((current) =>
+      current.map((item) =>
+        item.id === activeId
+          ? {
+              ...item,
+              text:
+                normalizedFinalText ||
+                (item.status === "pending" ? "本次回复已完成，但没有返回可显示文本。" : item.text),
+              status: "done",
+              detail: undefined,
+            }
+          : item,
+      ),
+    );
+    activeRealtimeAnswerIdRef.current = null;
+  }
+
+  function updateRealtimeAnswers(updater: (current: RealtimeAnswer[]) => RealtimeAnswer[]) {
+    setRealtimeAnswers((current) => {
+      const next = clampRealtimeAnswerItems(updater(current));
+      realtimeAnswersRef.current = next;
+      return next;
+    });
+  }
+
+  function beginPendingRealtimeAnswer(text: string, status: RealtimeAnswer["status"] = "pending", detail?: string) {
+    const activeId = activeRealtimeAnswerIdRef.current;
+    if (activeId) {
+      updateActiveRealtimeAnswer(text, status, detail);
+      return;
+    }
+
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    activeRealtimeAnswerIdRef.current = id;
+    updateRealtimeAnswers((current) => [
+      ...current,
+      {
+        id,
+        text,
+        status,
+        detail,
+        timestamp: formatTime(),
+      },
+    ]);
+  }
+
+  function updateActiveRealtimeAnswer(text: string, status: RealtimeAnswer["status"], detail?: string) {
+    const activeId = activeRealtimeAnswerIdRef.current;
+    if (!activeId) {
+      beginPendingRealtimeAnswer(text, status, detail);
+      return;
+    }
+
+    updateRealtimeAnswers((current) =>
+      current.map((item) =>
+        item.id === activeId
+          ? item.status === "streaming" && status === "pending"
+            ? item
+            : {
+                ...item,
+                text,
+                status,
+                detail,
+              }
+          : item,
+      ),
+    );
+  }
+
+  function markRealtimeAnswerError(detail: string) {
+    updateActiveRealtimeAnswer("Realtime 生成失败。", "error", detail);
+    activeRealtimeAnswerIdRef.current = null;
+  }
+
+  async function ensureRealtimeSocket(speaker: Speaker) {
+    const existingSocket = transcriptionSocketRef.current[speaker];
+    if (existingSocket && existingSocket.readyState === WebSocket.OPEN) {
+      return existingSocket;
+    }
+
+    manualStopRef.current[speaker] = false;
+    clearReconnectTimer(speaker);
+    const socket = await openRealtimeTranscriptionSocket(speaker);
+    transcriptionSocketRef.current[speaker] = socket;
+    captureMessageRef.current = { ...captureMessageRef.current, [speaker]: "文本连接中" };
+    setCaptureMessage((current) => ({
+      ...current,
+      [speaker]: "文本连接中",
+    }));
+    return socket;
+  }
+
+  async function handleScreenshot(createResponse: boolean) {
+    if (!sessionOnline) {
+      setError("请先开始 Realtime 对话，再发送截图。");
+      return;
+    }
+
+    try {
+      const imageUrl = await captureCurrentScreenDataUrl();
+      sendRealtimeControl("interviewer", {
+        type: "screenshot",
+        image_url: imageUrl,
+        create_response: createResponse,
+        prompt: createResponse
+          ? "这是我刚截的面试题、白板或代码截图，请结合当前问题给出可以直接口述的中文回答。"
+          : "这是我刚截的面试题、白板或代码截图，请作为后续回答上下文。",
+      });
+      setError(null);
+    } catch (screenshotError) {
+      setError(screenshotError instanceof Error ? screenshotError.message : "截图失败。");
+    }
+  }
+
+  async function captureCurrentScreenDataUrl() {
+    const activeSystemCapture = captureHandlesRef.current.interviewer;
+    if (activeSystemCapture?.snapshot) {
+      return activeSystemCapture.snapshot();
+    }
+    return captureScreenshotDataUrl();
+  }
+
+  async function respondToScreenCaptureRequest(payload: RealtimeMessage) {
+    const requestId = payload.request_id;
+    if (!requestId) {
+      return;
+    }
+
+    updateActiveRealtimeAnswer("正在读取当前屏幕上下文...", "pending", payload.reason);
+    try {
+      const imageUrl = await captureCurrentScreenDataUrl();
+      sendRealtimeControl("interviewer", {
+        type: "screen_snapshot",
+        request_id: requestId,
+        image_url: imageUrl,
+      });
+    } catch (captureError) {
+      const message = captureError instanceof Error ? captureError.message : "截图失败。";
+      sendRealtimeControl("interviewer", {
+        type: "screen_snapshot",
+        request_id: requestId,
+        error: message,
+      });
+      setError(message);
+    }
   }
 
   function ingestLiveChunk(speaker: Speaker, chunkText: string) {
@@ -728,19 +873,15 @@ export default function App() {
           return;
         }
 
-        await handleCommittedTurn(turn);
+        handleCommittedTurn(turn);
       })
       .catch((queueError) => {
         setError(queueError instanceof Error ? queueError.message : "对话片段处理失败。");
       });
   }
 
-  async function handleCommittedTurn(turn: TranscriptTurn, options: HandleTurnOptions = {}) {
-    const historyBeforeTurn = historyRef.current;
-    const prepared = appendTurn(turn);
-    if (prepared.turn && prepared.turn.speaker === "interviewer" && options.forceAnswer === true) {
-      await requestCoach(prepared.turn, historyBeforeTurn, options.answerScope ?? "general");
-    }
+  function handleCommittedTurn(turn: TranscriptTurn) {
+    appendTurn(turn);
   }
 
   function appendTurn(turn: TranscriptTurn): PreparedTurn {
@@ -779,156 +920,10 @@ export default function App() {
     return { turn: normalizedTurn, punctuationAttached: normalizedTurn.text !== turn.text };
   }
 
-  async function requestCoach(turn: TranscriptTurn, currentHistory: TranscriptTurn[], answerScope: AnswerScope) {
-    const answerScopeOption = getAnswerScopeOption(answerScope);
-    const result = await fetchWithTimeout(
-      `${API_BASE_URL}/api/coach/respond`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          turn,
-          history: currentHistory,
-          context,
-          generation_mode: "hybrid",
-          fast_model: fastModel,
-          answer_scope: answerScopeOption.scope,
-          project_context_label: answerScopeOption.projectContextLabel ?? "",
-        }),
-      },
-      COACH_REQUEST_TIMEOUT_MS,
-      "AI 回答请求超时，请检查后端是否已启动，或稍后重试。",
-    );
-
-    if (!result.ok) {
-      throw new Error(`回答接口失败，状态码 ${result.status}`);
-    }
-
-      const payload = (await result.json()) as CoachResponse;
-    const reusableCard = findReusableAnswerCard(answerItemsRef.current, turn.text, answerScope);
-    const item: AnswerFeedItem = {
-      ...payload,
-      id: reusableCard?.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      prompt: turn.text,
-      timestamp: turn.timestamp ?? formatTime(),
-      createdAtMs: Date.now(),
-      answerScope,
-      answerScopeLabel: answerScopeOption.answerScopeLabel,
-      projectContextLabel: answerScopeOption.projectContextLabel,
-    };
-
-    if (reusableCard) {
-      if (reusableCard.detail_job_id) {
-        const previousController = streamControllersRef.current.get(reusableCard.detail_job_id);
-        previousController?.abort();
-        streamControllersRef.current.delete(reusableCard.detail_job_id);
-      }
-      updateAnswerFeed((current) =>
-        current.map((currentItem) => (currentItem.id === reusableCard.id ? item : currentItem)),
-      );
-    } else {
-      updateAnswerFeed((current) => [...current, item]);
-    }
-
-    if (item.detail_job_id) {
-      void streamDetailedAnswer(item.id, item.detail_job_id);
-    }
-  }
-
-  async function streamDetailedAnswer(answerId: string, jobId: string) {
-    if (streamControllersRef.current.has(jobId)) {
-      return;
-    }
-
-    const controller = new AbortController();
-    streamControllersRef.current.set(jobId, controller);
-
-    try {
-      const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/coach/detail-stream/${jobId}`,
-        { signal: controller.signal },
-        COACH_REQUEST_TIMEOUT_MS,
-        "详细回答流连接超时，请检查后端是否可用。",
-      );
-
-      if (!response.ok || !response.body) {
-        throw new Error(`详细回答流失败，状态码 ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const messages = buffer.split("\n\n");
-        buffer = messages.pop() ?? "";
-
-        for (const message of messages) {
-          const dataLine = message.split("\n").find((line) => line.startsWith("data: "));
-          if (!dataLine) {
-            continue;
-          }
-
-          const status = JSON.parse(dataLine.slice(6)) as DetailJobStatus;
-          if (!status.answer) {
-            continue;
-          }
-
-          updateAnswerFeed((current) =>
-            current.map((item) =>
-              item.id === answerId
-                ? {
-                    ...item,
-                    deep_answer: status.answer ?? item.deep_answer,
-                  }
-                : item,
-            ),
-          );
-        }
-      }
-    } catch (streamError) {
-      if (!(streamError instanceof DOMException && streamError.name === "AbortError")) {
-        setError(streamError instanceof Error ? streamError.message : "详细回答流失败。");
-      }
-    } finally {
-      streamControllersRef.current.delete(jobId);
-    }
-  }
-
-  function updateAnswerFeed(updater: (current: AnswerFeedItem[]) => AnswerFeedItem[]) {
-    setAnswerFeed((current) => {
-      const next = clampAnswerFeedItems(updater(current));
-      answerItemsRef.current = next;
-      const retainedJobIds = new Set(
-        next
-          .map((item) => item.detail_job_id)
-          .filter((jobId): jobId is string => Boolean(jobId)),
-      );
-
-      current.forEach((item) => {
-        if (!item.detail_job_id || retainedJobIds.has(item.detail_job_id)) {
-          return;
-        }
-        const controller = streamControllersRef.current.get(item.detail_job_id);
-        controller?.abort();
-        streamControllersRef.current.delete(item.detail_job_id);
-      });
-
-      return next;
-    });
-  }
-
   function resetAnswerFeed() {
-    streamControllersRef.current.forEach((controller) => controller.abort());
-    streamControllersRef.current.clear();
-    answerItemsRef.current = [];
-    setAnswerFeed([]);
+    realtimeAnswersRef.current = [];
+    activeRealtimeAnswerIdRef.current = null;
+    setRealtimeAnswers([]);
   }
 
   return (
@@ -943,36 +938,26 @@ export default function App() {
       <main className="layout locked">
         <section className="panel transcript-panel live-mode">
           <div className="panel-head live-panel-head">
-            <div className="inline-select-row">
-              <PickerMenu
-                id="fast-model"
-                value={fastModel}
-                options={FAST_MODEL_OPTIONS}
-                onChange={(value) => setFastModel(value as FastModelChoice)}
-              />
-              <PickerMenu
-                id="recognition-locale"
-                value={recognitionLocale}
-                options={RECOGNITION_LOCALE_OPTIONS}
-                onChange={(value) => setRecognitionLocale(value as "zh" | "en")}
-                disabled={captureActive.candidate || captureActive.interviewer}
-              />
-            </div>
             <div className="live-panel-actions">
               <div className="answer-mode-actions">
-                {ANSWER_SCOPE_OPTIONS.map((option) => (
-                  <button
-                    key={option.scope}
-                    type="button"
-                    className={`session-start-button panel-start-button answer-mode-button ${option.scope === "general" ? "default" : "project"}`}
-                    onClick={() => void handleGenerateAnswer(option.scope)}
-                    aria-label={loading ? "生成中..." : option.label}
-                    title={loading ? "生成中..." : option.label}
-                    disabled={!canGenerateAnswer}
-                  >
-                    {loading ? "生成中..." : option.label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  className="session-start-button panel-start-button answer-mode-button project"
+                  onClick={() => void handleScreenshot(false)}
+                  disabled={!sessionOnline}
+                  title="截图并加入上下文"
+                >
+                  截图上下文
+                </button>
+                <button
+                  type="button"
+                  className="session-start-button panel-start-button answer-mode-button project"
+                  onClick={() => void handleScreenshot(true)}
+                  disabled={!sessionOnline}
+                  title="截图并回答"
+                >
+                  截图回答
+                </button>
               </div>
               <button
                 type="button"
@@ -1006,6 +991,7 @@ export default function App() {
             onSelectSpeaker={handleSpeakerChange}
             selectedSpeaker={selectedSpeaker}
             captureActive={captureActive}
+            captureMessage={captureMessage}
             input={input}
             onInputChange={setInput}
             loading={loading}
@@ -1019,64 +1005,35 @@ export default function App() {
           <div className="panel-head sticky">
             <div>
               <p className="panel-kicker">答案</p>
-              <h2>答案卡片</h2>
+              <h2>实时答案</h2>
             </div>
           </div>
 
           <div className="answer-feed" ref={answerFeedRef}>
-            {answerFeed.length === 0 ? (
+            {realtimeAnswers.length > 0 ? (
+              realtimeAnswers.map((item) => (
+                <article className={`answer-card realtime-answer-card ${item.status}`} key={item.id}>
+                  <div className="answer-card-head">
+                    <span className="timestamp">{item.timestamp}</span>
+                  </div>
+
+                  <p className="realtime-answer-text">{item.text}</p>
+                  {item.detail ? <p className="realtime-answer-status">{item.detail}</p> : null}
+                  <p className="realtime-answer-status">
+                    {item.status === "pending"
+                      ? "等待本次回复..."
+                      : item.status === "streaming"
+                        ? "本次回复生成中..."
+                        : item.status === "error"
+                          ? "本次回复失败"
+                          : "本次回复完成，Realtime 会话仍在监听"}
+                  </p>
+                </article>
+              ))
+            ) : (
               <div className="empty-card">
                 <p>还没有回答卡片</p>
               </div>
-            ) : (
-              answerFeed.map((item) => (
-                <article className="answer-card" key={item.id}>
-                  <div className="answer-card-head">
-                    <span className="timestamp">{item.timestamp}</span>
-                    <span className="answer-scope-chip">{item.answerScopeLabel}</span>
-                  </div>
-
-                  <p className="answer-prompt">问题：{item.prompt}</p>
-                  {item.projectContextLabel ? <p className="answer-scope-meta">项目上下文：{item.projectContextLabel}</p> : null}
-
-                  <section className="variant-block fast">
-                    <div className="variant-head">
-                      <h3>{item.fast_answer.label}</h3>
-                      <span>{formatAnswerMeta(item.fast_answer)}</span>
-                    </div>
-                    <div className="fast-answer-grid">
-                      {[item.fast_answer, ...(item.fast_answer_alternatives ?? [])].map((answer, index) => (
-                        <article className="fast-answer-option" key={`${item.id}-fast-${answer.source}-${index}`}>
-                          <div className="variant-head compact">
-                            <h4>{(item.fast_answer_alternatives?.length ?? 0) > 0 ? `方案 ${index + 1}` : "当前结果"}</h4>
-                            <span>{formatAnswerMeta(answer)}</span>
-                          </div>
-                          <p className="variant-summary">{answer.short_answer}</p>
-                          <ul>
-                            {answer.talking_points.map((point) => (
-                              <li key={point}>{point}</li>
-                            ))}
-                          </ul>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-
-                  <section className="variant-block deep">
-                    <div className="variant-head">
-                      <h3>{item.deep_answer.label}</h3>
-                      <span>{formatAnswerMeta(item.deep_answer)}</span>
-                    </div>
-                    <p className="variant-summary">{item.deep_answer.short_answer}</p>
-                    <ul>
-                      {item.deep_answer.talking_points.map((point) => (
-                        <li key={point}>{point}</li>
-                      ))}
-                    </ul>
-                  </section>
-
-                </article>
-              ))
             )}
           </div>
         </section>
@@ -1204,6 +1161,7 @@ function SessionDock({
   onSelectSpeaker,
   selectedSpeaker,
   captureActive,
+  captureMessage,
   input,
   onInputChange,
   loading,
@@ -1214,6 +1172,7 @@ function SessionDock({
   onSelectSpeaker: (speaker: Speaker) => void;
   selectedSpeaker: Speaker;
   captureActive: Record<Speaker, boolean>;
+  captureMessage: Record<Speaker, string>;
   input: string;
   onInputChange: (value: string) => void;
   loading: boolean;
@@ -1287,11 +1246,11 @@ function SessionDock({
         <div className="channel-status-row">
           <div className="channel-status-item">
             <span className={`channel-status-dot ${captureActive.candidate ? "active" : ""}`} />
-            <span>你</span>
+            <span>你：{captureMessage.candidate}</span>
           </div>
           <div className="channel-status-item">
             <span className={`channel-status-dot ${captureActive.interviewer ? "active" : ""}`} />
-            <span>面试官</span>
+            <span>面试官：{captureMessage.interviewer}</span>
           </div>
         </div>
       </div>
@@ -1309,128 +1268,35 @@ function SettingsIcon() {
   );
 }
 
-function PickerMenu({
-  id,
-  className,
-  value,
-  options,
-  onChange,
-  disabled = false,
-}: {
-  id: string;
-  className?: string;
-  value: string;
-  options: PickerOption[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const selected = options.find((option) => option.value === value) ?? options[0];
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (disabled) {
-      setOpen(false);
-    }
-  }, [disabled]);
-
-  return (
-    <div className={`picker-menu ${open ? "open" : ""} ${className ?? ""}`.trim()} ref={rootRef}>
-      <button
-        id={id}
-        className="picker-trigger"
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-      >
-        <span className="picker-trigger-label">{selected.label}</span>
-        <span className="picker-trigger-caret" aria-hidden="true" />
-      </button>
-
-      {open ? (
-        <div className="picker-popover" role="listbox" aria-labelledby={id}>
-          {options.map((option) => {
-            const active = option.value === value;
-            return (
-              <button
-                key={option.value}
-                className={`picker-option ${active ? "active" : ""}`}
-                type="button"
-                role="option"
-                aria-selected={active}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="picker-option-copy">
-                  <strong>{option.label}</strong>
-                  {option.description ? <small>{option.description}</small> : null}
-                </span>
-                <span className="picker-option-check" aria-hidden="true">
-                  {active ? "✓" : ""}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function formatTime() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit,
-  timeoutMs: number,
-  timeoutMessage: string,
-) {
-  const controller = new AbortController();
-  const timerId = window.setTimeout(() => controller.abort(), timeoutMs);
+async function captureScreenshotDataUrl() {
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: false,
+  });
+  const video = document.createElement("video");
+  video.srcObject = stream;
+  video.muted = true;
+  await video.play();
 
   try {
-    return await fetch(input, {
-      ...init,
-      signal: init.signal ?? controller.signal,
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(timeoutMessage);
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("无法创建截图画布。");
     }
-    throw error;
+    context.drawImage(video, 0, 0, width, height);
+    return canvas.toDataURL("image/png");
   } finally {
-    window.clearTimeout(timerId);
+    stream.getTracks().forEach((track) => track.stop());
+    video.srcObject = null;
   }
 }
 
@@ -1487,80 +1353,6 @@ function buildRenderedHistory(
   });
 
   return rendered;
-}
-
-function shouldGenerateAnswerCard(text: string, forceAnswer: boolean) {
-  if (forceAnswer) {
-    return true;
-  }
-
-  const normalized = text.trim();
-  if (normalized.length < 8) {
-    return false;
-  }
-  if (/^(谢谢|好的|嗯嗯|可以|行|对|然后|继续|没了)[。！!？?]?$/u.test(normalized)) {
-    return false;
-  }
-  if (/[？?]$/u.test(normalized)) {
-    return true;
-  }
-
-  return /(为什么|怎么|如何|区别|说一下|讲一下|解释|介绍|比较|展开|实现|原理|设计|选择|选型|优化|处理|解决|怎么看|能不能|可不可以|有没有|是否|再说|详细说)/u.test(
-    normalized,
-  );
-}
-
-function getLatestInterviewerTurnContext(history: TranscriptTurn[], requireQuestionLike = false) {
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const turn = history[index];
-    if (turn?.speaker !== "interviewer") {
-      continue;
-    }
-    if (requireQuestionLike && !shouldGenerateAnswerCard(turn.text, false)) {
-      continue;
-    }
-    return {
-      turn,
-      historyBeforeTurn: history.slice(0, index),
-    };
-  }
-  return null;
-}
-
-function getAnswerScopeOption(answerScope: AnswerScope) {
-  return ANSWER_SCOPE_OPTIONS.find((option) => option.scope === answerScope) ?? ANSWER_SCOPE_OPTIONS[0];
-}
-
-function findReusableAnswerCard(items: AnswerFeedItem[], text: string, answerScope: AnswerScope) {
-  const lastItem = items.length ? items[items.length - 1] : null;
-  if (!lastItem) {
-    return null;
-  }
-  if (lastItem.answerScope !== answerScope) {
-    return null;
-  }
-
-  const ageMs = Date.now() - (lastItem.createdAtMs ?? 0);
-  if (ageMs > ANSWER_CARD_REUSE_WINDOW_MS) {
-    return null;
-  }
-
-  const previous = normalizeCompareText(lastItem.prompt);
-  const current = normalizeCompareText(text);
-  if (!previous || !current) {
-    return null;
-  }
-
-  const overlap =
-    previous.includes(current) ||
-    current.includes(previous) ||
-    (!lastItem.deep_answer.ready && current.length >= Math.max(6, previous.length / 2));
-
-  return overlap ? lastItem : null;
-}
-
-function normalizeCompareText(text: string) {
-  return text.replace(/[\s，。！？?、,.!;；:“”"'（）()]/gu, "");
 }
 
 function shouldHoldInterviewerBuffer(text: string) {
@@ -1636,15 +1428,10 @@ function mergeTranscriptText(left: string, right: string) {
   return `${normalizedLeft}${needsSpace ? " " : ""}${normalizedRight}`;
 }
 
-function formatAnswerMeta(answer: { source: string; elapsed_ms?: number | null }) {
-  const latency = typeof answer.elapsed_ms === "number" ? `${answer.elapsed_ms}ms` : null;
-  return latency ? `${answer.source} · ${latency}` : answer.source;
-}
-
 function clampHistoryTurns(turns: TranscriptTurn[]) {
   return turns.length > MAX_HISTORY_TURNS ? turns.slice(-MAX_HISTORY_TURNS) : turns;
 }
 
-function clampAnswerFeedItems(items: AnswerFeedItem[]) {
-  return items.length > MAX_ANSWER_FEED_ITEMS ? items.slice(-MAX_ANSWER_FEED_ITEMS) : items;
+function clampRealtimeAnswerItems(items: RealtimeAnswer[]) {
+  return items.length > MAX_REALTIME_ANSWER_ITEMS ? items.slice(-MAX_REALTIME_ANSWER_ITEMS) : items;
 }

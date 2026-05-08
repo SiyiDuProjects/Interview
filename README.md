@@ -1,187 +1,41 @@
 # Interview Copilot
 
-本项目是一个本地桌面端模拟面试助手。
-
-- 左侧展示实时对话、手动输入或脚本模拟
-- 右侧生成滚动答案卡
-- 支持候选人麦克风和面试官系统音频双路采集
-- 支持快答 + 详细回答流式补全
-- 支持简历、JD、备注等上下文注入
-
-当前形态是 `Electron + React` 桌面端配合 `FastAPI` 服务端。
-
-## 仓库结构
-
-```text
-apps/
-  desktop/   Electron + React 桌面端
-  server/    FastAPI 服务端
-docs/
-  architecture.md
-```
-
+本项目是一个本地桌面端实时面试辅助工具。桌面端使用 Electron + React，服务端使用 FastAPI。当前实时主链路已经改为 OpenAI Realtime：系统音频进�?Realtime 会话并流式返回文字答案，候选人麦克风内容只作为上下文�?
 ## 当前能力
 
-1. 实时对话页
-   左侧对话气泡，右侧答案卡。
-2. 双路采集
-   同时采集候选人麦克风和面试官系统音频。
-3. 手动输入
-   手动提交面试官问题，或只把你的回答写入上下文。
-4. 脚本模拟
-   用脚本片段回放整段面试流程。
-5. 快答路径
-   面试官问题进入后，优先返回可立即复述的短答案。
-6. 详答路径
-   同一张答案卡继续补全更稳、更长的详细版。
-7. 上下文注入
-   支持姓名、目标岗位、简历、岗位描述、补充备注。
-8. 追问识别
-   结合最近对话判断是否是 follow-up。
+- 双路采集：麦克风表示候选人，系统音频表示面试官�?- Realtime 回答：面试官问题触发 `gpt-realtime-2` 文字流式答案�?- 手动输入：没有电话或语音时，可以手动输入面试官问题测试回答链路�?- 背景资料：姓名、目标岗位、简历、JD、补充备注会写入 Realtime instructions�?- 项目上下文：`Innovation AI`、`CanvasBot`、`DiscordBot` 按钮会切换回答范围，并通过轻量工具查找 `docs/project-contexts/` 下的项目资料�?- 截图输入：支持“截图上下文”和“截图回答”，把当前屏幕截图作�?Realtime image input�?- 旧链路保留：`/api/coach/respond`、detail SSE、旧 `/ws/transcribe` 仍保留作备用和回归测试�?
+## 运行方式
 
-## 技术架构
+### 1. 准备环境变量
 
-- 桌面端：`React 18 + Vite + Electron`
-- 服务端：`FastAPI`
-- 实时中文转写：讯飞 RTASR
-- 实时英文转写：Deepgram
-- 回答生成：OpenAI
-- 详细回答流：SSE
-
-更详细的流程见 [architecture.md](/C:/Users/Administrator/Desktop/Projects/Interview/docs/architecture.md)。
-
-## 功能和依赖关系
-
-不同模式依赖不同配置，不是所有密钥都必须同时填写。
-
-### 只想看 UI 或跑手动输入/脚本模拟
-
-- 服务端可启动
-- 推荐配置 `OPENAI_API_KEY`
-
-没有 `OPENAI_API_KEY` 时：
-
-- UI 仍然能打开
-- 手动输入和脚本模拟仍能走流程
-- 答案卡会显示 AI 不可用占位内容，不会生成真实答案
-
-### 想用中文实时面试
-
-需要：
-
-- `OPENAI_API_KEY`
-- `XFYUN_RTASR_APP_ID`
-- `XFYUN_RTASR_ACCESS_KEY_ID`
-- `XFYUN_RTASR_ACCESS_KEY_SECRET`
-
-中文实时模式会走讯飞，不走 Deepgram。
-
-### 想用英文实时面试
-
-需要：
-
-- `OPENAI_API_KEY`
-- `DEEPGRAM_API_KEY`
-
-英文实时模式会走 Deepgram。
-
-## 环境变量
-
-项目根目录放 `.env` 文件。可以从 [.env.example](/C:/Users/Administrator/Desktop/Projects/Interview/.env.example) 复制。
-
-### 回答生成
-
-- `OPENAI_API_KEY`
-  OpenAI Key。回答生成依赖它。
-- `OPENAI_BASE_URL`
-  OpenAI API Base URL。
-- `OPENAI_FAST_MODEL`
-  快答模型。
-- `OPENAI_MODEL`
-  详细回答模型。
-- `OPENAI_TIMEOUT_SECONDS`
-  回答生成超时。
-
-### 英文实时转写
-
-- `DEEPGRAM_API_KEY`
-  英文实时转写所需。
-- `DEEPGRAM_WS_URL`
-  Deepgram WebSocket 地址。
-- `DEEPGRAM_MODEL`
-  默认 `nova-3`。
-- `DEEPGRAM_LANGUAGE`
-  非英文时的语言配置。
-- `DEEPGRAM_LANGUAGE_EN`
-  英文语言配置，默认 `en-US`。
-- `DEEPGRAM_INTERIM_RESULTS`
-  是否返回中间结果。
-- `DEEPGRAM_ENDPOINTING_MS`
-  endpointing 参数。
-- `DEEPGRAM_PUNCTUATE`
-  是否自动标点。
-- `DEEPGRAM_SMART_FORMAT`
-  是否智能格式化。
-
-### 中文实时转写
-
-- `XFYUN_RTASR_APP_ID`
-  讯飞应用 ID。
-- `XFYUN_RTASR_ACCESS_KEY_ID`
-  讯飞 access key id。
-- `XFYUN_RTASR_ACCESS_KEY_SECRET`
-  讯飞 access key secret。
-- `XFYUN_RTASR_WS_URL`
-  讯飞 RTASR WebSocket 地址。
-- `XFYUN_RTASR_LANG`
-  中文实时语言配置。
-- `XFYUN_RTASR_PUNC`
-  是否自动标点。
-- `XFYUN_RTASR_PD`
-  领域配置。
-- `XFYUN_RTASR_VAD_MDN`
-  VAD 配置。
-- `XFYUN_RTASR_ENG_LANG_TYPE`
-  英文混说相关配置。
-
-### 其他转写相关
-
-以下变量主要给服务端 chunk 转写接口或兼容路径使用，不是桌面端实时主链路的核心配置：
-
-- `OPENAI_TRANSCRIPTION_MODEL`
-- `OPENAI_TRANSCRIPTION_TIMEOUT_SECONDS`
-- `TRANSCRIPTION_PROVIDER`
-- `TRANSCRIPTION_LANGUAGE`
-
-### 桌面端
-
-- `VITE_API_BASE_URL`
-  桌面端访问服务端的地址，默认 `http://127.0.0.1:8000`。
-
-## 本地启动
-
-### 1. 准备 `.env`
-
-从 [.env.example](/C:/Users/Administrator/Desktop/Projects/Interview/.env.example) 复制一份：
-
+复制 `.env.example`�?
 ```powershell
 Copy-Item .env.example .env
 ```
 
-按你的使用场景填写最少配置：
+至少填写�?
+```env
+OPENAI_API_KEY=你的 OpenAI API Key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_REALTIME_MODEL=gpt-realtime-2
+```
 
-- 手动输入 / 脚本模拟：至少填 `OPENAI_API_KEY`
-- 中文实时：再填 `XFYUN_*`
-- 英文实时：再填 `DEEPGRAM_API_KEY`
+�?ASR 变量 `DEEPGRAM_*`、`XFYUN_*` 仍可保留，但�?Realtime 主链路不依赖它们�?
+### 2. 安装后端依赖
 
-### 2. 启动服务端
+如果 `apps/server/.venv` 不存在：
 
 ```powershell
-cd apps/server
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
+C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### 3. 启动后端
+
+```powershell
+cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 健康检查：
@@ -190,170 +44,81 @@ uvicorn app.main:app --reload --port 8000
 curl http://127.0.0.1:8000/health
 ```
 
-### 3. 启动桌面端
-
+### 4. 启动桌面�?
+另开一�?PowerShell�?
 ```powershell
-cd apps/desktop
-npm install
-npm run dev:desktop
+cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
+npm.cmd install
+npm.cmd run dev:desktop
 ```
 
-生产式启动：
+实时麦克风和系统音频必须�?Electron 桌面窗口测试。不要用 Codex in-app browser 或普通浏览器测试双路采集，它们可能没有麦克风/屏幕音频权限，会显示 `Permission denied`�?
+## 无语音时怎么测试
 
-```powershell
-cd apps/desktop
-npm run build
-npm run start:desktop
-```
+如果暂时没有电话或面试音频：
 
-## 页面说明
+1. 启动后端�?Electron 桌面端�?2. 可以不点“开始对话”，直接在左下输入框输入面试官问题并发送�?3. 未进�?Realtime 会话时，手动输入会走�?`/api/coach/respond` 备用链路�?4. 如果要测�?Realtime 手动文字流式回答，需要先�?Realtime session 在线；目前仍依赖“开始对话”成功建立采集会话。没有可用媒体权限时，这部分会被浏览器权限卡住�?
+后续可以加一个“文�?Realtime 模式”，�?Realtime WebSocket 独立于音频采集启动�?
+## Realtime 主链�?
+前端�?
+- `apps/desktop/src/audioCapture.ts` 采集 24kHz PCM�?- `apps/desktop/src/App.tsx` 连接 `/ws/realtime/interview/interviewer` �?`/ws/realtime/interview/candidate`�?- 右侧优先显示 `RealtimeAnswer` 流式文本卡�?
+后端�?
+- `apps/server/app/main.py` 暴露 `/ws/realtime/interview/{speaker}`�?- `apps/server/app/services/openai_realtime.py` 管理 OpenAI Realtime 会话�?- `apps/server/app/services/realtime_context.py` 构�?instructions，并实现 `lookup_candidate_context` 轻量背景检索�?
+说话人区分方式：
 
-### 实时对话
+- `interviewer`：系统音频，触发回答�?- `candidate`：麦克风，只注入上下文，不触发回答�?
+## 截图输入
 
-- 左侧显示对话气泡
-- 右侧显示答案卡
-- “开始”会同时启动双路采集
-- 中文模式使用讯飞
-- 英文模式使用 Deepgram
+桌面端提供两个按钮：
 
-### 手动输入
-
-- “手动输入面试官问题”
-  会触发右侧答案卡生成
-- “手动输入你的回答”
-  只写入上下文，不直接生成答案卡
-
-适合：
-
-- 补上下文
-- 快速测试问题回答
-- 没配实时转写时先调回答链路
-
-### 脚本模拟
-
-- 复杂场景按钮
-  直接灌入一段较长面试流程
-- 脚本回放
-  每行一条，使用 `interviewer|` 或 `candidate|` 前缀
-
-适合：
-
-- 验证追问识别
-- 验证长对话
-- 验证答案卡复用和补全
-
-### 个人资料
-
-可填写：
-
-- 姓名
-- 目标岗位
-- 简历
-- 岗位描述
-- 补充备注
-
-这些内容会直接影响回答风格和答案内容。
-
-## 运行说明
-
-### 系统音频采集
-
-开始实时采集后，系统会弹出共享/录制选择。
-
-如果要采集面试官系统音频，需要在系统选择器里明确勾选音频共享。否则会报“没有采集到系统音频”。
-
-### 模式切换
-
-- 正在实时采集时，不建议切换识别语言
-- 正在脚本回放时，实时采集开关会被禁用
-
-### 长时面试
-
-当前实现没有写死 60 分钟上限，实时链路也带了长连保活。
-
-但它还不是“长时场景完全加固版”，目前仍有这些限制：
-
-- 前端会持续累积对话历史和答案卡
-- 没有做长会话裁剪或分段归档
-- 没有做断线自动重连
-
-所以结论是：
-
-- 连续跑 1 小时在实现上是可能的
-- 但 README 不把它表述为“已稳定支持 1 小时生产级面试”
-
+- `截图上下文`：把截图加入当前 Realtime 会话，不立刻生成答案�?- `截图回答`：把截图加入会话并立即触发文字回答�?
+截图是离散图片输入，不是连续视频流。建议只在题目、白板、代码片段需要视觉信息时使用�?
 ## 测试
 
-服务端测试：
-
+后端测试�?
 ```powershell
-cd apps/server
-python -m unittest tests.test_interview_flow tests.test_latency
+cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
+.\.venv\Scripts\python.exe -m unittest tests.test_realtime
+.\.venv\Scripts\python.exe -m unittest tests.test_interview_flow tests.test_latency
 ```
 
-覆盖内容包括：
-
-- hybrid 模式返回
-- 详细回答后台任务完成
-- 详细回答流式输出
-- 无 OpenAI Key 时的占位行为
-- 延迟测试
-
-桌面端构建检查：
-
+前端构建�?
 ```powershell
-cd apps/desktop
-npm run build
+cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
+npm.cmd run build
 ```
 
 ## 常见问题
 
-### 1. 中文实时模式一启动就报错
+### 页面显示 `Permission denied`
 
-优先检查：
+这是媒体权限问题，不�?OpenAI Realtime 问题。请�?Electron 桌面端测试，不要�?Codex in-app browser。Electron 已配置自动允�?`media`、`display-capture`、`microphone` 权限，并使用系统音频 loopback�?
+### 页面显示 `invalid_model`
 
-- `XFYUN_RTASR_APP_ID`
-- `XFYUN_RTASR_ACCESS_KEY_ID`
-- `XFYUN_RTASR_ACCESS_KEY_SECRET`
+检�?`.env`�?
+```env
+OPENAI_REALTIME_MODEL=gpt-realtime-2
+```
 
-中文实时模式走讯飞，不会使用 Deepgram 替代。
+当前默认模型 ID �?`gpt-realtime-2`。如果你显式配置了旧值，重启后端后才会生效�?
+### 后端启动失败，提示找不到 python
 
-### 2. 英文实时模式一启动就报错
+本机可能没有系统 `python`。用项目虚拟环境�?
+```powershell
+cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
 
-优先检查：
-
-- `DEEPGRAM_API_KEY`
-
-### 3. 系统音频没有采到
-
-通常不是代码问题，而是共享时没有勾选音频。
-
-### 4. 有对话但右侧没有正常答案
-
-优先检查：
-
-- `OPENAI_API_KEY`
-- 服务端是否已启动
-- `VITE_API_BASE_URL` 是否指向正确地址
-
-### 5. 手动输入能用，实时采集不行
-
-说明回答链路大概率正常，问题多半在实时转写配置或系统采集权限。
-
-## 已知限制
-
-- 当前 UI 主要按桌面窗口设计，不是网页端响应式产品
-- 中文实时和英文实时使用不同服务商
-- 非实时页面虽然已支持面板内滚动，但还没有做更细的长表单交互优化
-- 长会话还没有做自动归档、摘要压缩和断线重连
-- README 描述以当前代码为准，不保证覆盖未来所有实验分支
-
+Electron 启动时也会优先使�?`apps/server/.venv/Scripts/python.exe`�?
+### 手动输入能用，实时采集不�?
+通常说明 OpenAI 回答链路正常，问题在媒体权限、系统音频采集或桌面端权限。优先检查是否在 Electron 桌面端运行�?
 ## 相关文件
 
-- [README.md](/C:/Users/Administrator/Desktop/Projects/Interview/README.md)
-- [architecture.md](/C:/Users/Administrator/Desktop/Projects/Interview/docs/architecture.md)
-- [.env.example](/C:/Users/Administrator/Desktop/Projects/Interview/.env.example)
-- [desktop App.tsx](/C:/Users/Administrator/Desktop/Projects/Interview/apps/desktop/src/App.tsx)
-- [desktop styles.css](/C:/Users/Administrator/Desktop/Projects/Interview/apps/desktop/src/styles.css)
-- [server main.py](/C:/Users/Administrator/Desktop/Projects/Interview/apps/server/app/main.py)
-- [server config.py](/C:/Users/Administrator/Desktop/Projects/Interview/apps/server/app/config.py)
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/audioCapture.ts`
+- `apps/desktop/electron/main.cjs`
+- `apps/server/app/main.py`
+- `apps/server/app/services/openai_realtime.py`
+- `apps/server/app/services/realtime_context.py`
+- `docs/project-contexts/`
+
