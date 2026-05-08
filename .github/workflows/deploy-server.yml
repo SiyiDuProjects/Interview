@@ -75,7 +75,7 @@ jobs:
 
       - name: Sync server files
         env:
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PATH: ${{ secrets.INTERVIEW_DEPLOY_PATH }}
         run: |
           test -n "$DEPLOY_PATH"
           ssh deploy-server "mkdir -p '$DEPLOY_PATH'"
@@ -105,7 +105,7 @@ jobs:
 
       - name: Health check
         env:
-          PUBLIC_HEALTH_URL: ${{ secrets.PUBLIC_HEALTH_URL }}
+          PUBLIC_HEALTH_URL: ${{ secrets.INTERVIEW_PUBLIC_HEALTH_URL }}
         run: |
           test -n "$PUBLIC_HEALTH_URL"
           for attempt in $(seq 1 24); do

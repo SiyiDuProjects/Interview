@@ -143,16 +143,21 @@ GitHub Actions workflow 位于 `.github/workflows/deploy-server.yml`。push 到 
 3. 在 `/home/ubuntu/muxing` 重建 `interview_api`。
 4. 检查 `https://interview.reachard.co/health`。
 
-GitHub repo `SiyiDu/Interview` 需要配置 secrets：
+GitHub organization `SiyiDuProjects` 建议配置这些共享 Actions secrets，并授权给需要部署到同一台 VPS 的仓库：
 
 ```text
 SSH_HOST=49.51.38.235
 SSH_PORT=22
 SSH_USER=ubuntu
 SSH_KEY=<Siyi.pem 的完整私钥内容>
-DEPLOY_PATH=/opt/interview/server
 COMPOSE_PATH=/home/ubuntu/muxing
-PUBLIC_HEALTH_URL=https://interview.reachard.co/health
+```
+
+Interview 专属 secrets 建议也放在 organization 里，但要用项目前缀，避免和其他项目冲突：
+
+```text
+INTERVIEW_DEPLOY_PATH=/opt/interview/server
+INTERVIEW_PUBLIC_HEALTH_URL=https://interview.reachard.co/health
 ```
 
 VPS 上的生产环境变量只放在 `/opt/interview/server/.env`：

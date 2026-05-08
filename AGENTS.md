@@ -94,6 +94,13 @@ PowerShell 下不要用 `npm`，会被执行策略拦截；用 `npm.cmd`。
 
 生产 `.env` 只放在 `/opt/interview/server/.env`，不要提交到 GitHub。GitHub Actions 只通过 rsync 同步 `apps/server/`，并排除 `.env` / `.env.*`。
 
+GitHub organization secrets 约定：
+
+- 共享：`SSH_HOST`、`SSH_PORT`、`SSH_USER`、`SSH_KEY`、`COMPOSE_PATH`
+- Interview 专属：`INTERVIEW_DEPLOY_PATH`、`INTERVIEW_PUBLIC_HEALTH_URL`
+
+不要在 organization 里用通用 `DEPLOY_PATH` / `PUBLIC_HEALTH_URL` 表示项目专属值，否则多个项目会互相冲突。
+
 Electron 支持远程后端：如果 `INTERVIEW_API_BASE_URL` 或 `VITE_API_BASE_URL` 是非 localhost URL，会直接连接远程 API，不启动本地 FastAPI。
 
 ## Realtime API 注意事项
