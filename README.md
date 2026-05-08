@@ -62,11 +62,16 @@ npm.cmd install
 npm.cmd run dev:desktop
 ```
 
-使用远程后端时：
+桌面端默认连接远程后端：
+
+```text
+https://interview.reachard.co
+```
+
+如果需要强制使用本地后端，可以在启动前覆盖：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
-$env:INTERVIEW_API_BASE_URL="https://interview.reachard.co"
+$env:INTERVIEW_API_BASE_URL="http://127.0.0.1:8000"
 npm.cmd run dev:desktop
 ```
 

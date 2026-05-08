@@ -46,6 +46,13 @@ cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
 npm.cmd run dev:desktop
 ```
 
+桌面端默认连接 `https://interview.reachard.co`，不会启动本地 FastAPI。需要本地开发时，显式设置：
+
+```powershell
+$env:INTERVIEW_API_BASE_URL="http://127.0.0.1:8000"
+npm.cmd run dev:desktop
+```
+
 如果 `.venv` 不存在，用 bundled Python 创建：
 
 ```powershell
@@ -101,7 +108,7 @@ GitHub organization secrets 约定：
 
 workflow 兼容仓库级 `DEPLOY_PATH` / `PUBLIC_HEALTH_URL` 作为 fallback。不要在 organization 里用通用 `DEPLOY_PATH` / `PUBLIC_HEALTH_URL` 表示项目专属值，否则多个项目会互相冲突。
 
-Electron 支持远程后端：如果 `INTERVIEW_API_BASE_URL` 或 `VITE_API_BASE_URL` 是非 localhost URL，会直接连接远程 API，不启动本地 FastAPI。
+Electron 默认使用远程后端 `https://interview.reachard.co`。如果 `INTERVIEW_API_BASE_URL` 或 `VITE_API_BASE_URL` 显式设置为 localhost，才会走本地自动启动/复用逻辑。
 
 ## Realtime API 注意事项
 

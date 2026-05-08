@@ -8,6 +8,7 @@ const { app, BrowserWindow, desktopCapturer, session, shell } = require("electro
 
 const WINDOW_TITLE = "Sage";
 const DEFAULT_API_PORT = 8000;
+const DEFAULT_REMOTE_API_BASE_URL = "https://interview.reachard.co";
 const FALLBACK_API_PORTS = [8000, 8001];
 const API_START_TIMEOUT_MS = 15000;
 const REQUIRED_REALTIME_PROTOCOL = "realtime-text-events-v2";
@@ -17,7 +18,7 @@ let apiProcess = null;
 let apiPort = DEFAULT_API_PORT;
 
 function configuredApiBaseUrl() {
-  return (process.env.INTERVIEW_API_BASE_URL || process.env.VITE_API_BASE_URL || "").trim();
+  return (process.env.INTERVIEW_API_BASE_URL || process.env.VITE_API_BASE_URL || DEFAULT_REMOTE_API_BASE_URL).trim();
 }
 
 function isLocalApiUrl(value) {
