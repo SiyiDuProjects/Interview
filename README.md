@@ -153,12 +153,14 @@ SSH_KEY=<Siyi.pem 的完整私钥内容>
 COMPOSE_PATH=/home/ubuntu/muxing
 ```
 
-Interview 专属 secrets 建议也放在 organization 里，但要用项目前缀，避免和其他项目冲突：
+Interview 专属 secrets 建议也放在 organization 里，并用项目前缀，避免和其他项目冲突：
 
 ```text
 INTERVIEW_DEPLOY_PATH=/opt/interview/server
 INTERVIEW_PUBLIC_HEALTH_URL=https://interview.reachard.co/health
 ```
+
+兼容当前仓库级 secrets：workflow 也会读取 `DEPLOY_PATH` 和 `PUBLIC_HEALTH_URL` 作为 fallback。
 
 VPS 上的生产环境变量只放在 `/opt/interview/server/.env`：
 
