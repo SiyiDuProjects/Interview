@@ -90,7 +90,7 @@ class RealtimeTests(unittest.TestCase):
             "os.environ",
             {
                 "OPENAI_REALTIME_TRANSCRIPTION_MODEL": "gpt-realtime-whisper",
-                "TRANSCRIPTION_LANGUAGE": "zh",
+                "OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE": "zh",
             },
         ):
             asyncio.run(_send_transcription_session_update(upstream))

@@ -544,8 +544,8 @@ async def _connect_openai_realtime(model: str | None = None, *, intent: str | No
 async def _send_transcription_session_update(upstream: ClientConnection) -> None:
     settings = get_settings()
     transcription: dict[str, Any] = {"model": settings.openai_realtime_transcription_model}
-    if settings.transcription_language:
-        transcription["language"] = settings.transcription_language
+    if settings.openai_realtime_transcription_language:
+        transcription["language"] = settings.openai_realtime_transcription_language
     await _send_json(
         upstream,
         {
@@ -583,8 +583,8 @@ async def _send_session_update(
     }
     if transcription:
         audio_input_transcription: dict[str, Any] = {"model": settings.openai_realtime_transcription_model}
-        if settings.transcription_language:
-            audio_input_transcription["language"] = settings.transcription_language
+        if settings.openai_realtime_transcription_language:
+            audio_input_transcription["language"] = settings.openai_realtime_transcription_language
         audio_input["transcription"] = audio_input_transcription
     session: dict[str, Any] = {
         "type": "realtime",
