@@ -62,6 +62,16 @@ npm.cmd install
 npm.cmd run dev:desktop
 ```
 
+使用远程后端时：
+
+```powershell
+cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
+$env:INTERVIEW_API_BASE_URL="https://interview.reachard.co"
+npm.cmd run dev:desktop
+```
+
+如果 `INTERVIEW_API_BASE_URL` 或 `VITE_API_BASE_URL` 是非 localhost URL，Electron 会直接连接远程后端，不会启动本地 FastAPI。
+
 健康检查：
 
 ```powershell
@@ -113,6 +123,57 @@ cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
 ```powershell
 cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
 npm.cmd run build
+```
+
+## CI/CD 部署
+
+后端按 `connection` 项目的方式部署到同一台 VPS，但使用独立服务和独立端口：
+
+- SSH 用户：`ubuntu`
+- Compose 路径：`/home/ubuntu/muxing`
+- 部署路径：`/opt/interview/server`
+- Compose service/container：`interview_api`
+- 本机端口：`8000`
+- 公网域名：`https://interview.reachard.co`
+
+GitHub Actions workflow 位于 `.github/workflows/deploy-server.yml`。push 到 `main` 且改动包含 `apps/server/**` 或 workflow 时，会自动：
+
+1. 安装 Python 依赖并跑后端测试。
+2. rsync `apps/server/` 到 VPS 的 `/opt/interview/server/`。
+3. 在 `/home/ubuntu/muxing` 重建 `interview_api`。
+4. 检查 `https://interview.reachard.co/health`。
+
+GitHub repo `SiyiDu/Interview` 需要配置 secrets：
+
+```text
+SSH_HOST=49.51.38.235
+SSH_PORT=22
+SSH_USER=ubuntu
+SSH_KEY=<Siyi.pem 的完整私钥内容>
+DEPLOY_PATH=/opt/interview/server
+COMPOSE_PATH=/home/ubuntu/muxing
+PUBLIC_HEALTH_URL=https://interview.reachard.co/health
+```
+
+VPS 上的生产环境变量只放在 `/opt/interview/server/.env`：
+
+```env
+OPENAI_API_KEY=你的 OpenAI API Key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_REALTIME_MODEL=gpt-realtime-2
+OPENAI_REALTIME_REASONING_EFFORT=low
+OPENAI_REALTIME_TRANSCRIPTION_MODEL=gpt-realtime-whisper
+OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE=zh
+OPENAI_CODE_MODEL=gpt-5.5
+OPENAI_CODE_REASONING_EFFORT=high
+OPENAI_CODE_TIMEOUT_SECONDS=45
+```
+
+Cloudflare Tunnel 需要添加 public hostname：
+
+```text
+Hostname: interview.reachard.co
+Service: http://localhost:8000
 ```
 
 ## 相关文件

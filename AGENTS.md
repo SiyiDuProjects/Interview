@@ -73,6 +73,29 @@ npm.cmd run build
 
 PowerShell 下不要用 `npm`，会被执行策略拦截；用 `npm.cmd`。
 
+## 部署约定
+
+后端 CI/CD 按 `connection` 项目的方式部署，但服务独立：
+
+- GitHub workflow: `.github/workflows/deploy-server.yml`
+- VPS SSH 用户：`ubuntu`
+- VPS Compose 路径：`/home/ubuntu/muxing`
+- VPS 部署路径：`/opt/interview/server`
+- Compose service/container：`interview_api`
+- 端口：`8000`
+- 公网域名：`https://interview.reachard.co`
+
+服务器已有端口不要复用：
+
+- `8080` = sub2api
+- `8787` = connection
+- `20241` = cloudflared metrics
+- `40000` = WARP
+
+生产 `.env` 只放在 `/opt/interview/server/.env`，不要提交到 GitHub。GitHub Actions 只通过 rsync 同步 `apps/server/`，并排除 `.env` / `.env.*`。
+
+Electron 支持远程后端：如果 `INTERVIEW_API_BASE_URL` 或 `VITE_API_BASE_URL` 是非 localhost URL，会直接连接远程 API，不启动本地 FastAPI。
+
 ## Realtime API 注意事项
 
 - 默认模型：`OPENAI_REALTIME_MODEL=gpt-realtime-2`。

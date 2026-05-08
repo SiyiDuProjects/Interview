@@ -16,8 +16,36 @@ const writableRoot = path.join(os.tmpdir(), "interview-copilot-electron");
 let apiProcess = null;
 let apiPort = DEFAULT_API_PORT;
 
+function configuredApiBaseUrl() {
+  return (process.env.INTERVIEW_API_BASE_URL || process.env.VITE_API_BASE_URL || "").trim();
+}
+
+function isLocalApiUrl(value) {
+  if (!value) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return ["127.0.0.1", "localhost"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isRemoteApiUrl(value) {
+  if (!value) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return Boolean(url.protocol && url.hostname && !isLocalApiUrl(value));
+  } catch {
+    return false;
+  }
+}
+
 function configuredApiPort() {
-  const configuredUrl = process.env.INTERVIEW_API_BASE_URL || process.env.VITE_API_BASE_URL || "";
+  const configuredUrl = configuredApiBaseUrl();
   const match = configuredUrl.match(/127\.0\.0\.1:(\d+)|localhost:(\d+)/);
   if (match) {
     return Number(match[1] || match[2]);
@@ -93,6 +121,12 @@ async function waitForApiReady(timeoutMs) {
 }
 
 async function ensureApiServer() {
+  const configuredUrl = configuredApiBaseUrl();
+  if (isRemoteApiUrl(configuredUrl)) {
+    process.env.INTERVIEW_API_BASE_URL = configuredUrl;
+    return;
+  }
+
   const candidatePorts = [configuredApiPort(), ...FALLBACK_API_PORTS].filter(
     (port, index, ports) => typeof port === "number" && ports.indexOf(port) === index,
   );
