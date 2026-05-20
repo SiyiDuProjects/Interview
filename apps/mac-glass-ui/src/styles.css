@@ -1,22 +1,23 @@
 :root {
   color-scheme: dark;
-  --bg: rgba(6, 8, 10, 0.68);
-  --bg-strong: rgba(7, 10, 12, 0.86);
+  --bg: rgba(13, 14, 15, 0.72);
+  --bg-strong: rgba(12, 13, 14, 0.9);
   --surface: rgba(255, 255, 255, 0.07);
   --surface-strong: rgba(255, 255, 255, 0.12);
   --surface-hover: rgba(255, 255, 255, 0.16);
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.16);
-  --text: rgba(255, 255, 255, 0.9);
-  --text-soft: rgba(255, 255, 255, 0.62);
-  --text-faint: rgba(255, 255, 255, 0.36);
-  --accent: #f5f5f4;
-  --accent-dark: #111315;
-  --green: #5ad789;
-  --red: #ff7066;
-  --amber: #f3c969;
-  --radius-panel: 22px;
-  --radius-control: 18px;
+  --line: rgba(255, 255, 255, 0.13);
+  --line-strong: rgba(255, 255, 255, 0.22);
+  --text: rgba(255, 255, 255, 0.94);
+  --text-soft: rgba(255, 255, 255, 0.7);
+  --text-faint: rgba(255, 255, 255, 0.45);
+  --accent: #f7f2e8;
+  --accent-dark: #161719;
+  --green: #65e59a;
+  --cyan: #79d7ff;
+  --red: #ff756b;
+  --amber: #f2c66d;
+  --radius-panel: 21px;
+  --radius-control: 11px;
   font-family:
     Inter,
     ui-sans-serif,
@@ -69,8 +70,8 @@ input {
 .glass-shell {
   position: relative;
   height: 100vh;
-  padding: 12px;
-  background: transparent;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.01);
 }
 
 .glass-panel {
@@ -83,12 +84,13 @@ input {
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   background:
-    radial-gradient(circle at 50% -12%, rgba(255, 255, 255, 0.18), transparent 38%),
-    linear-gradient(180deg, rgba(21, 25, 28, 0.82), rgba(5, 8, 10, 0.78));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 19%),
+    linear-gradient(135deg, rgba(42, 48, 46, 0.74), rgba(14, 15, 16, 0.76) 52%, rgba(26, 22, 18, 0.72));
   box-shadow:
-    0 24px 80px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(26px) saturate(145%);
+    0 18px 54px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(28px) saturate(150%);
 }
 
 .privacy-ring {
@@ -101,11 +103,11 @@ input {
 
 .control-strip {
   display: flex;
-  height: 54px;
+  height: 52px;
   flex-shrink: 0;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px 7px 12px;
+  padding: 8px 10px 7px 11px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -127,16 +129,20 @@ input {
 }
 
 .round-action {
-  width: 36px;
-  height: 36px;
+  width: 35px;
+  height: 35px;
   border-radius: 999px;
-  background: var(--accent);
+  background: linear-gradient(180deg, #fffaf1, #e6dfd2);
   color: var(--accent-dark);
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .round-action.active {
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--text);
+  background: rgba(255, 117, 107, 0.18);
+  color: #ffd8d4;
+  box-shadow: inset 0 0 0 1px rgba(255, 117, 107, 0.25);
 }
 
 .round-action:disabled {
@@ -144,9 +150,9 @@ input {
 }
 
 .icon-action {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
+  width: 33px;
+  height: 33px;
+  border-radius: 9px;
 }
 
 .icon-action:hover,
@@ -176,7 +182,7 @@ input {
   align-items: center;
   gap: 8px;
   color: var(--text-soft);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -204,13 +210,14 @@ input {
 .prompt-bar {
   position: relative;
   display: grid;
-  min-height: 66px;
+  min-height: 64px;
   flex-shrink: 0;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 12px 9px;
   border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
 }
 
 .prompt-bar textarea {
@@ -219,14 +226,23 @@ input {
   max-height: 90px;
   resize: none;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-control);
   outline: none;
-  padding: 11px 12px;
-  background: rgba(0, 0, 0, 0.18);
+  padding: 11px 13px;
+  background: rgba(4, 5, 6, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.065),
+    0 0 0 1px rgba(255, 255, 255, 0.045);
   color: var(--text);
   font-size: 14px;
   font-weight: 540;
   line-height: 20px;
+}
+
+.prompt-bar textarea:focus {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(247, 242, 232, 0.22);
 }
 
 .prompt-bar textarea::placeholder {
@@ -236,23 +252,25 @@ input {
 .mode-chip {
   height: 38px;
   min-width: 72px;
-  border-radius: 12px;
+  border-radius: var(--radius-control);
   padding: 0 12px;
   font-size: 12px;
   font-weight: 760;
 }
 
 .mode-chip.active {
-  background: var(--surface-strong);
-  color: var(--text);
+  background: rgba(247, 242, 232, 0.16);
+  color: #fff8eb;
+  box-shadow: inset 0 0 0 1px rgba(247, 242, 232, 0.14);
 }
 
 .send-button {
   width: 38px;
   height: 38px;
-  border-radius: 12px;
-  background: var(--surface-strong);
-  color: var(--text);
+  border-radius: var(--radius-control);
+  background: linear-gradient(180deg, rgba(247, 242, 232, 0.22), rgba(247, 242, 232, 0.11));
+  color: #fff7e8;
+  box-shadow: inset 0 0 0 1px rgba(247, 242, 232, 0.13);
 }
 
 .glass-toolbar {
@@ -266,10 +284,17 @@ input {
   height: 34px;
   justify-content: center;
   gap: 7px;
-  border-radius: 11px;
-  background: rgba(255, 255, 255, 0.055);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.065);
   font-size: 12px;
   font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.toolbar-button.primary {
+  background: rgba(121, 215, 255, 0.13);
+  color: rgba(229, 248, 255, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(121, 215, 255, 0.18);
 }
 
 .toolbar-button span {
@@ -282,7 +307,7 @@ input {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  padding: 10px 12px;
+  padding: 9px 12px 10px;
 }
 
 .status-card {
@@ -292,14 +317,19 @@ input {
   gap: 8px;
   align-items: center;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 10px;
   padding: 9px;
-  background: rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 .status-card.active {
-  border-color: rgba(90, 215, 137, 0.28);
-  background: rgba(90, 215, 137, 0.08);
+  border-color: rgba(101, 229, 154, 0.3);
+  background: rgba(101, 229, 154, 0.09);
+}
+
+.status-card.interviewer.active {
+  border-color: rgba(121, 215, 255, 0.28);
+  background: rgba(121, 215, 255, 0.085);
 }
 
 .status-icon {
@@ -307,9 +337,17 @@ input {
   width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-soft);
+}
+
+.status-card.interviewer .status-icon {
+  color: rgba(167, 229, 255, 0.9);
+}
+
+.status-card.candidate .status-icon {
+  color: rgba(153, 239, 187, 0.9);
 }
 
 .status-icon svg {
@@ -359,17 +397,19 @@ input {
 .empty-state,
 .transcript-list {
   border: 1px solid var(--line);
-  border-radius: 17px;
-  background: rgba(0, 0, 0, 0.22);
+  border-radius: 12px;
+  background: rgba(5, 6, 7, 0.22);
 }
 
 .answer-card {
   margin-top: 10px;
   padding: 14px 15px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
 }
 
 .answer-card.streaming {
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: rgba(121, 215, 255, 0.25);
+  background: rgba(7, 14, 17, 0.3);
 }
 
 .answer-card.error {
@@ -401,7 +441,7 @@ input {
 .answer-card p {
   margin: 9px 0 0;
   white-space: pre-wrap;
-  color: rgba(255, 255, 255, 0.82);
+  color: rgba(255, 255, 255, 0.88);
   font-size: 15px;
   line-height: 1.65;
 }
@@ -423,14 +463,20 @@ input {
 }
 
 .empty-state {
+  position: relative;
   display: flex;
-  min-height: 260px;
+  min-height: calc(100% - 10px);
   flex-direction: column;
   align-items: center;
   justify-content: center;
   margin-top: 10px;
-  padding: 28px;
+  overflow: hidden;
+  padding: 26px;
   text-align: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012)),
+    rgba(5, 6, 7, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .empty-state.compact {
@@ -439,33 +485,52 @@ input {
 
 .empty-icon {
   display: grid;
-  width: 44px;
-  height: 44px;
-  margin-bottom: 16px;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 14px;
   place-items: center;
-  border-radius: 14px;
-  background: var(--surface);
-  color: var(--text-soft);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.085);
+  color: rgba(255, 255, 255, 0.74);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
 }
 
 .empty-state h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 23px;
   font-weight: 780;
   letter-spacing: 0;
 }
 
 .empty-state p {
   max-width: 360px;
-  margin: 8px 0 0;
-  color: var(--text-faint);
+  margin: 7px 0 0;
+  color: var(--text-soft);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.empty-meter {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  display: grid;
+  grid-template-columns: 1.4fr 0.8fr 1fr;
+  gap: 8px;
+  opacity: 0.42;
+}
+
+.empty-meter span {
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .transcript-list {
   margin-top: 10px;
   padding: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .transcript-row {
@@ -518,9 +583,11 @@ input {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-panel);
   padding: 16px;
-  background: rgba(8, 10, 12, 0.94);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
-  backdrop-filter: blur(24px);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), transparent 22%),
+    rgba(13, 14, 15, 0.9);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(26px) saturate(145%);
 }
 
 .sheet-header {
@@ -558,7 +625,7 @@ input {
 .context-sheet textarea {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-control);
   outline: none;
   padding: 10px 11px;
   resize: vertical;

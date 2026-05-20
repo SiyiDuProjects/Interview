@@ -798,7 +798,7 @@ export default function App() {
         {expanded ? (
           <>
             <section className="glass-toolbar">
-              <button type="button" className="toolbar-button" onClick={() => void handleScreenshot(true)}>
+              <button type="button" className="toolbar-button primary" onClick={() => void handleScreenshot(true)}>
                 <Camera />
                 <span>Solve screen</span>
               </button>
@@ -817,8 +817,20 @@ export default function App() {
             </section>
 
             <section className="status-grid">
-              <StatusCard icon={<Monitor />} label="Interviewer" value={captureMessage.interviewer} active={captureActive.interviewer} />
-              <StatusCard icon={<Mic />} label="Candidate" value={captureMessage.candidate} active={captureActive.candidate} />
+              <StatusCard
+                active={captureActive.interviewer}
+                icon={<Monitor />}
+                label="Interviewer"
+                tone="interviewer"
+                value={captureMessage.interviewer}
+              />
+              <StatusCard
+                active={captureActive.candidate}
+                icon={<Mic />}
+                label="Candidate"
+                tone="candidate"
+                value={captureMessage.candidate}
+              />
             </section>
 
             <section className="answer-stage" ref={answerFeedRef}>
@@ -833,24 +845,17 @@ export default function App() {
               ) : answers.length > 0 ? (
                 answers.map((answer) => <AnswerCard answer={answer} key={answer.id} />)
               ) : (
-                <div className="empty-state">
-                  <div className="empty-icon">
-                    <ArrowDown />
-                  </div>
-                  <h1>Ask anything</h1>
-                  <p>Start listening or send a question. Answers stream from the existing OpenAI Realtime backend.</p>
-                </div>
+                <EmptyAnswerState sessionOnline={sessionOnline} />
               )}
             </section>
           </>
         ) : null}
+        {showContext ? (
+          <ContextSheet context={context} onClose={() => setShowContext(false)} onChange={updateContextField} />
+        ) : null}
       </section>
 
       {privacyMode ? <div className="privacy-ring" aria-hidden="true" /> : null}
-
-      {showContext ? (
-        <ContextSheet context={context} onClose={() => setShowContext(false)} onChange={updateContextField} />
-      ) : null}
     </main>
   );
 }
@@ -859,21 +864,40 @@ function StatusCard({
   active,
   icon,
   label,
+  tone,
   value,
 }: {
   active: boolean;
   icon: ReactNode;
   label: string;
+  tone: Speaker;
   value: string;
 }) {
   return (
-    <article className={`status-card ${active ? "active" : ""}`}>
+    <article className={`status-card ${tone} ${active ? "active" : ""}`}>
       <div className="status-icon">{icon}</div>
       <div>
         <span>{label}</span>
         <p>{value}</p>
       </div>
     </article>
+  );
+}
+
+function EmptyAnswerState({ sessionOnline }: { sessionOnline: boolean }) {
+  return (
+    <div className="empty-state">
+      <div className="empty-meter" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="empty-icon">
+        <ArrowDown />
+      </div>
+      <h1>{sessionOnline ? "Listening" : "Ready"}</h1>
+      <p>{sessionOnline ? "Interview audio is live. The next answer will land here." : "Waiting for the next prompt."}</p>
+    </div>
   );
 }
 
