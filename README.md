@@ -37,7 +37,39 @@ OPENAI_CODE_MODEL=gpt-5.5
 
 不要把 `.env` 或 OpenAI API key 放到前端。Electron 只连接本地或远程 FastAPI。
 
+macOS / Linux:
+
+```bash
+cp .env.example .env
+```
+
 ## 本地启动
+
+### macOS
+
+首次准备：
+
+```bash
+cd /Users/bytedance/Projects/Interview
+scripts/setup-macos.sh
+```
+
+本地开发启动：
+
+```bash
+cd /Users/bytedance/Projects/Interview
+scripts/dev-macos.sh
+```
+
+`scripts/dev-macos.sh` 默认设置 `INTERVIEW_API_BASE_URL=http://127.0.0.1:8000`，Electron 会自动启动或复用本地 FastAPI。若想连接远程后端，可以显式覆盖：
+
+```bash
+INTERVIEW_API_BASE_URL=https://interview.reachard.co npm run --prefix apps/desktop dev:desktop
+```
+
+macOS 首次运行 Electron 时，若双路采集没有声音，请到 System Settings -> Privacy & Security 中确认运行 Electron 的终端/应用拥有 Microphone、Screen & System Audio Recording 权限。
+
+### Windows
 
 后端：
 
