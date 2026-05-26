@@ -2,6 +2,11 @@
 
 给后续 Codex/agent 的项目说明。
 
+## 变更维护
+
+- 完成有意义的代码、配置、部署或文档改动后，除非用户明确要求不要提交，否则创建 git commit。
+- 改动影响安装、启动、部署、架构、环境变量或项目操作说明时，同步更新 `README.md` 和/或 `AGENTS.md`。
+
 ## 项目概况
 
 这是一个本地 Electron + React + FastAPI 的实时面试辅助项目。当前实时主链路只使用 OpenAI Realtime：
