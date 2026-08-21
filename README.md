@@ -61,10 +61,10 @@ cd /Users/bytedance/Projects/Interview
 scripts/dev-macos.sh
 ```
 
-`scripts/dev-macos.sh` 默认设置 `INTERVIEW_API_BASE_URL=http://127.0.0.1:8000`，Electron 会自动启动或复用本地 FastAPI。若想连接远程后端，可以显式覆盖：
+`scripts/dev-macos.sh` 默认连接远程后端 `https://interview.reachard.co`，不会启动本地 FastAPI。若想连接本地后端，显式设置 `INTERVIEW_API_BASE_URL` 为 localhost：
 
 ```bash
-INTERVIEW_API_BASE_URL=https://interview.reachard.co npm run --prefix apps/desktop dev:desktop
+INTERVIEW_API_BASE_URL=http://127.0.0.1:8000 scripts/dev-macos.sh
 ```
 
 macOS 首次运行 Electron 时，若双路采集没有声音，请到 System Settings -> Privacy & Security 中确认运行 Electron 的终端/应用拥有 Microphone、Screen & System Audio Recording 权限。
@@ -107,7 +107,7 @@ $env:INTERVIEW_API_BASE_URL="http://127.0.0.1:8000"
 npm.cmd run dev:desktop
 ```
 
-如果 `INTERVIEW_API_BASE_URL` 或 `VITE_API_BASE_URL` 是非 localhost URL，Electron 会直接连接远程后端，不会启动本地 FastAPI。
+如果没有显式设置 `INTERVIEW_API_BASE_URL` 为 localhost，Electron 会直接连接远程后端，不会启动本地 FastAPI。`VITE_API_BASE_URL` 不触发 Electron 本地后端自动启动。
 
 健康检查：
 
@@ -167,7 +167,7 @@ npm.cmd run build
 后端按 `connection` 项目的方式部署到同一台 VPS，但使用独立服务和独立端口：
 
 - SSH 用户：`ubuntu`
-- Compose 路径：`/home/ubuntu/muxing`
+- Compose 路径：`/home/ubuntu/siyi`
 - 部署路径：`/opt/interview/server`
 - Compose service/container：`interview_api`
 - 本机端口：`8000`
@@ -177,7 +177,7 @@ GitHub Actions workflow 位于 `.github/workflows/deploy-server.yml`。push 到 
 
 1. 安装 Python 依赖并跑后端测试。
 2. rsync `apps/server/` 到 VPS 的 `/opt/interview/server/`。
-3. 在 `/home/ubuntu/muxing` 重建 `interview_api`。
+3. 在 `/home/ubuntu/siyi` 重建 `interview_api`。
 4. 检查 `https://interview.reachard.co/health`。
 
 GitHub organization `SiyiDuProjects` 建议配置这些共享 Actions secrets，并授权给需要部署到同一台 VPS 的仓库：
@@ -187,7 +187,7 @@ SSH_HOST=49.51.38.235
 SSH_PORT=22
 SSH_USER=ubuntu
 SSH_KEY=<Siyi.pem 的完整私钥内容>
-COMPOSE_PATH=/home/ubuntu/muxing
+COMPOSE_PATH=/home/ubuntu/siyi
 ```
 
 Interview 专属 secrets 建议也放在 organization 里，并用项目前缀，避免和其他项目冲突：

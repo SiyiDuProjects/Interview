@@ -21,6 +21,16 @@ function configuredApiBaseUrl() {
   return (process.env.INTERVIEW_API_BASE_URL || process.env.VITE_API_BASE_URL || DEFAULT_REMOTE_API_BASE_URL).trim();
 }
 
+function configuredApiBaseUrlSource() {
+  if (process.env.INTERVIEW_API_BASE_URL?.trim()) {
+    return "INTERVIEW_API_BASE_URL";
+  }
+  if (process.env.VITE_API_BASE_URL?.trim()) {
+    return "VITE_API_BASE_URL";
+  }
+  return "default";
+}
+
 function isLocalApiUrl(value) {
   if (!value) {
     return false;
@@ -46,13 +56,18 @@ function isRemoteApiUrl(value) {
 }
 
 function configuredApiPort() {
-  const configuredUrl = configuredApiBaseUrl();
+  const configuredUrl = configuredLocalApiBaseUrl() || configuredApiBaseUrl();
   const match = configuredUrl.match(/127\.0\.0\.1:(\d+)|localhost:(\d+)/);
   if (match) {
     return Number(match[1] || match[2]);
   }
   const configuredPort = Number(process.env.INTERVIEW_API_PORT || "");
   return Number.isFinite(configuredPort) && configuredPort > 0 ? configuredPort : null;
+}
+
+function configuredLocalApiBaseUrl() {
+  const explicitUrl = (process.env.INTERVIEW_API_BASE_URL || "").trim();
+  return isLocalApiUrl(explicitUrl) ? explicitUrl : "";
 }
 
 app.setPath("userData", writableRoot);
@@ -123,10 +138,24 @@ async function waitForApiReady(timeoutMs) {
 
 async function ensureApiServer() {
   const configuredUrl = configuredApiBaseUrl();
-  if (isRemoteApiUrl(configuredUrl)) {
-    process.env.INTERVIEW_API_BASE_URL = configuredUrl;
+  const configuredSource = configuredApiBaseUrlSource();
+  const localApiUrl = configuredLocalApiBaseUrl();
+  if (!localApiUrl) {
+    process.env.INTERVIEW_API_BASE_URL = isRemoteApiUrl(configuredUrl) ? configuredUrl : DEFAULT_REMOTE_API_BASE_URL;
+    process.env.VITE_API_BASE_URL = process.env.INTERVIEW_API_BASE_URL;
+    process.env.INTERVIEW_LOCAL_API_ENABLED = "0";
+    console.log("[desktop] using remote api", {
+      baseUrl: process.env.INTERVIEW_API_BASE_URL,
+      source: configuredSource,
+    });
     return;
   }
+
+  console.log("[desktop] using local api", {
+    baseUrl: localApiUrl,
+    source: "INTERVIEW_API_BASE_URL",
+  });
+  process.env.INTERVIEW_LOCAL_API_ENABLED = "1";
 
   const candidatePorts = [configuredApiPort(), ...FALLBACK_API_PORTS].filter(
     (port, index, ports) => typeof port === "number" && ports.indexOf(port) === index,

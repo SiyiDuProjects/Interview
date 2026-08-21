@@ -1,5 +1,4 @@
 import {
-  ArrowDown,
   Bot,
   Camera,
   Check,
@@ -8,16 +7,14 @@ import {
   EyeOff,
   LoaderCircle,
   MessageSquare,
-  Mic,
   Monitor,
-  Pause,
   Play,
   RotateCcw,
   Send,
   Square,
   X,
 } from "lucide-react";
-import { KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   captureScreenshotDataUrl,
   getCaptureLabel,
@@ -28,8 +25,8 @@ import {
 import type { CandidateContext, RealtimeAnswer, RealtimeMessage, Speaker, TranscriptTurn } from "./types";
 
 const API_BASE_URL =
-  window.glassDesktop?.apiBaseUrl ||
-  import.meta.env.VITE_API_BASE_URL ||
+  resolveApiBaseUrl(window.glassDesktop?.apiBaseUrl, window.glassDesktop?.localApiEnabled) ||
+  resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL, false) ||
   "https://interview.reachard.co";
 
 const MIN_AUDIO_CHUNK_BYTES = 2048;
@@ -55,6 +52,7 @@ export default function App() {
   const [sendMode, setSendMode] = useState<SendMode>("question");
   const [expanded, setExpanded] = useState(true);
   const [privacyMode, setPrivacyMode] = useState(false);
+  const [privacyModePending, setPrivacyModePending] = useState(false);
   const [sessionStarting, setSessionStarting] = useState(false);
   const [captureActive, setCaptureActive] = useState<Record<Speaker, boolean>>({
     interviewer: false,
@@ -91,7 +89,7 @@ export default function App() {
 
   const sessionOnline = captureActive.interviewer || captureActive.candidate || socketActive.interviewer || socketActive.candidate;
   const latestAnswer = answers[answers.length - 1];
-  const statusTone = sessionOnline ? "live" : error ? "error" : "idle";
+  const sessionButtonLabel = sessionStarting ? "启动中" : sessionOnline ? "结束面试" : error ? "重新开始" : "开始面试";
   const promptPlaceholder =
     sendMode === "question"
       ? "Ask anything about the interview..."
@@ -129,6 +127,25 @@ export default function App() {
       }
     });
   }, [input, sendMode, sessionOnline]);
+
+  useEffect(() => {
+    let active = true;
+    window.glassDesktop
+      ?.invoke<{ enabled: boolean }>("glass:get-privacy-mode")
+      .then((result) => {
+        if (active) {
+          setPrivacyMode(Boolean(result.enabled));
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setPrivacyMode(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -282,6 +299,14 @@ export default function App() {
           return;
         }
 
+        if (payload.type === "error" && !resolved) {
+          const detail = formatRealtimeError(payload.detail ?? `${getCaptureLabel(speaker)} Realtime 失败。`);
+          setSpeakerCaptureMessage(speaker, detail);
+          fail(new Error(detail));
+          socket.close();
+          return;
+        }
+
         handleRealtimeMessage(speaker, payload);
       });
 
@@ -336,7 +361,7 @@ export default function App() {
 
   function handleRealtimeMessage(speaker: Speaker, payload: RealtimeMessage) {
     if (payload.type === "error") {
-      const detail = payload.detail ?? `${getCaptureLabel(speaker)} Realtime 失败。`;
+      const detail = formatRealtimeError(payload.detail ?? `${getCaptureLabel(speaker)} Realtime 失败。`);
       setError(detail);
       setSpeakerCaptureMessage(speaker, detail);
       markRealtimeAnswerError(detail);
@@ -688,9 +713,25 @@ export default function App() {
   }
 
   async function togglePrivacyMode() {
+    if (privacyModePending) {
+      return;
+    }
     const next = !privacyMode;
-    setPrivacyMode(next);
-    await window.glassDesktop?.invoke("glass:set-privacy-mode", next);
+    if (!window.glassDesktop) {
+      setPrivacyMode(next);
+      return;
+    }
+    setPrivacyModePending(true);
+    try {
+      const result = await window.glassDesktop?.invoke<{ enabled: boolean }>("glass:set-privacy-mode", next);
+      setPrivacyMode(Boolean(result?.enabled));
+    } catch (privacyError) {
+      setError(privacyError instanceof Error ? privacyError.message : "隐私模式切换失败。");
+      const result = await window.glassDesktop?.invoke<{ enabled: boolean }>("glass:get-privacy-mode").catch(() => ({ enabled: false }));
+      setPrivacyMode(Boolean(result?.enabled));
+    } finally {
+      setPrivacyModePending(false);
+    }
   }
 
   async function toggleExpanded() {
@@ -715,186 +756,162 @@ export default function App() {
   }
 
   return (
-    <main className={`glass-shell ${expanded ? "expanded" : "collapsed"} ${privacyMode ? "privacy" : ""}`}>
-      <section className="glass-panel">
-        <header className="control-strip app-region-drag">
-          <button
-            type="button"
-            className={`round-action app-region-no-drag ${sessionOnline ? "active" : ""}`}
-            onClick={() => void toggleSession()}
-            title={sessionOnline ? "Stop Realtime session" : "Start Realtime session"}
-            aria-label={sessionOnline ? "Stop Realtime session" : "Start Realtime session"}
-            disabled={sessionStarting}
-          >
-            {sessionStarting ? <LoaderCircle className="spin" /> : sessionOnline ? <Square /> : <Play />}
-          </button>
+    <main className={`glass-panel ${expanded ? "expanded" : "collapsed"} ${privacyMode ? "privacy" : ""}`}>
+      <header className="control-strip app-region-drag">
+        <button
+          type="button"
+          className={`session-action app-region-no-drag ${sessionOnline ? "active" : ""} ${error && !sessionOnline ? "error" : ""}`}
+          onClick={() => void toggleSession()}
+          title={sessionOnline ? "结束面试" : "开始面试"}
+          aria-label={sessionOnline ? "结束面试" : "开始面试"}
+          disabled={sessionStarting}
+        >
+          {sessionStarting ? <LoaderCircle className="spin" /> : sessionOnline ? <Square /> : <Play />}
+          <span>{sessionButtonLabel}</span>
+        </button>
 
-          <div className="listen-state">
-            <div className={`pulse-dot ${statusTone}`} />
-            <span>{sessionOnline ? "Listening" : error ? "Needs attention" : "Ready"}</span>
-          </div>
+        <div className="control-spacer" />
 
-          <div className="control-spacer" />
+        <button
+          type="button"
+          className={`icon-action app-region-no-drag ${privacyMode ? "active" : ""}`}
+          onClick={() => void togglePrivacyMode()}
+          title={privacyMode ? "Show in Dock" : "Hide from Dock"}
+          aria-label={privacyMode ? "Show in Dock" : "Hide from Dock"}
+          disabled={privacyModePending}
+        >
+          {privacyMode ? <EyeOff /> : <Eye />}
+        </button>
+        <button
+          type="button"
+          className="icon-action app-region-no-drag"
+          onClick={() => setShowContext(true)}
+          title="Candidate context"
+          aria-label="Candidate context"
+        >
+          <Bot />
+        </button>
+        <button
+          type="button"
+          className="icon-action app-region-no-drag"
+          onClick={() => void toggleExpanded()}
+          title={expanded ? "Collapse" : "Expand"}
+          aria-label={expanded ? "Collapse" : "Expand"}
+        >
+          <ChevronRight className={expanded ? "rotate-90" : ""} />
+        </button>
+        <button
+          type="button"
+          className="icon-action app-region-no-drag"
+          onClick={() => void window.glassDesktop?.invoke("glass:close")}
+          title="Quit"
+          aria-label="Quit"
+        >
+          <X />
+        </button>
+      </header>
 
-          <button
-            type="button"
-            className={`icon-action app-region-no-drag ${privacyMode ? "active" : ""}`}
-            onClick={() => void togglePrivacyMode()}
-            title="Privacy mode"
-            aria-label="Privacy mode"
-          >
-            {privacyMode ? <EyeOff /> : <Eye />}
-          </button>
-          <button
-            type="button"
-            className="icon-action app-region-no-drag"
-            onClick={() => setShowContext(true)}
-            title="Candidate context"
-            aria-label="Candidate context"
-          >
-            <Bot />
-          </button>
-          <button
-            type="button"
-            className="icon-action app-region-no-drag"
-            onClick={() => void toggleExpanded()}
-            title={expanded ? "Collapse" : "Expand"}
-            aria-label={expanded ? "Collapse" : "Expand"}
-          >
-            <ChevronRight className={expanded ? "rotate-90" : ""} />
-          </button>
-          <button
-            type="button"
-            className="icon-action app-region-no-drag"
-            onClick={() => void window.glassDesktop?.invoke("glass:close")}
-            title="Quit"
-            aria-label="Quit"
-          >
-            <X />
-          </button>
-        </header>
-
-        <section className="prompt-bar">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={handleInputKeyDown}
-            placeholder={promptPlaceholder}
-            rows={1}
-          />
-          <button
-            type="button"
-            className={`mode-chip ${sendMode === "question" ? "active" : ""}`}
-            onClick={() => setSendMode(sendMode === "question" ? "context" : "question")}
-          >
-            {sendMode === "question" ? "Ask" : "Context"}
-          </button>
-          <button type="button" className="send-button" onClick={() => void submitManualTurn()} title="Send">
-            <Send />
-          </button>
-        </section>
-
-        {expanded ? (
-          <>
-            <section className="glass-toolbar">
-              <button type="button" className="toolbar-button primary" onClick={() => void handleScreenshot(true)}>
-                <Camera />
-                <span>Solve screen</span>
-              </button>
-              <button type="button" className="toolbar-button" onClick={() => void handleScreenshot(false)}>
-                <Monitor />
-                <span>Add screen</span>
-              </button>
-              <button type="button" className="toolbar-button" onClick={() => setShowTranscript((current) => !current)}>
-                <MessageSquare />
-                <span>{showTranscript ? "Answers" : "Transcript"}</span>
-              </button>
-              <button type="button" className="toolbar-button" onClick={resetConversation}>
-                <RotateCcw />
-                <span>New chat</span>
-              </button>
-            </section>
-
-            <section className="status-grid">
-              <StatusCard
-                active={captureActive.interviewer}
-                icon={<Monitor />}
-                label="Interviewer"
-                tone="interviewer"
-                value={captureMessage.interviewer}
-              />
-              <StatusCard
-                active={captureActive.candidate}
-                icon={<Mic />}
-                label="Candidate"
-                tone="candidate"
-                value={captureMessage.candidate}
-              />
-            </section>
-
-            <section className="answer-stage" ref={answerFeedRef}>
-              {error ? (
-                <div className="error-banner">
-                  <span>{error}</span>
-                </div>
-              ) : null}
-
-              {showTranscript ? (
-                <TranscriptView turns={orderedHistory} />
-              ) : answers.length > 0 ? (
-                answers.map((answer) => <AnswerCard answer={answer} key={answer.id} />)
-              ) : (
-                <EmptyAnswerState sessionOnline={sessionOnline} />
-              )}
-            </section>
-          </>
-        ) : null}
-        {showContext ? (
-          <ContextSheet context={context} onClose={() => setShowContext(false)} onChange={updateContextField} />
-        ) : null}
+      <section className="prompt-bar">
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={handleInputKeyDown}
+          placeholder={promptPlaceholder}
+          rows={1}
+        />
+        <button
+          type="button"
+          className={`mode-chip ${sendMode === "question" ? "active" : ""}`}
+          onClick={() => setSendMode(sendMode === "question" ? "context" : "question")}
+        >
+          {sendMode === "question" ? "Ask" : "Context"}
+        </button>
+        <button type="button" className="send-button" onClick={() => void submitManualTurn()} title="Send">
+          <Send />
+        </button>
       </section>
 
+      {expanded ? (
+        <>
+          <QuickActions
+            onAddScreen={() => void handleScreenshot(false)}
+            onNewChat={resetConversation}
+            onSolveScreen={() => void handleScreenshot(true)}
+            onToggleTranscript={() => setShowTranscript((current) => !current)}
+            showTranscript={showTranscript}
+          />
+
+          <section className="answer-stage" ref={answerFeedRef}>
+            {error ? (
+              <div className="error-banner">
+                <span>{error}</span>
+              </div>
+            ) : null}
+
+            {showTranscript ? (
+              <TranscriptView turns={orderedHistory} />
+            ) : answers.length > 0 ? (
+              answers.map((answer) => <AnswerCard answer={answer} key={answer.id} />)
+            ) : (
+              <EmptyAnswerState sessionOnline={sessionOnline} />
+            )}
+          </section>
+        </>
+      ) : null}
+      {showContext ? (
+        <ContextSheet context={context} onClose={() => setShowContext(false)} onChange={updateContextField} />
+      ) : null}
       {privacyMode ? <div className="privacy-ring" aria-hidden="true" /> : null}
     </main>
   );
 }
 
-function StatusCard({
-  active,
-  icon,
-  label,
-  tone,
-  value,
+function QuickActions({
+  onAddScreen,
+  onNewChat,
+  onSolveScreen,
+  onToggleTranscript,
+  showTranscript,
 }: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  tone: Speaker;
-  value: string;
+  onAddScreen: () => void;
+  onNewChat: () => void;
+  onSolveScreen: () => void;
+  onToggleTranscript: () => void;
+  showTranscript: boolean;
 }) {
   return (
-    <article className={`status-card ${tone} ${active ? "active" : ""}`}>
-      <div className="status-icon">{icon}</div>
-      <div>
-        <span>{label}</span>
-        <p>{value}</p>
+    <section className="quick-actions" aria-label="Interview tools">
+      <button type="button" className="quick-action solve" onClick={onSolveScreen}>
+        <Camera />
+        <span>Solve screen</span>
+      </button>
+      <div className="quiet-actions">
+        <button type="button" className="quick-action quiet" onClick={onAddScreen} title="Add screen" aria-label="Add screen">
+          <Monitor />
+          <span>Add screen</span>
+        </button>
+        <button
+          type="button"
+          className={`quick-action quiet ${showTranscript ? "active" : ""}`}
+          onClick={onToggleTranscript}
+          title={showTranscript ? "Show answers" : "Show transcript"}
+          aria-label={showTranscript ? "Show answers" : "Show transcript"}
+        >
+          <MessageSquare />
+          <span>{showTranscript ? "Answers" : "Transcript"}</span>
+        </button>
+        <button type="button" className="quick-action quiet icon-only" onClick={onNewChat} title="New chat" aria-label="New chat">
+          <RotateCcw />
+        </button>
       </div>
-    </article>
+    </section>
   );
 }
 
 function EmptyAnswerState({ sessionOnline }: { sessionOnline: boolean }) {
   return (
     <div className="empty-state">
-      <div className="empty-meter" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
-      <div className="empty-icon">
-        <ArrowDown />
-      </div>
       <h1>{sessionOnline ? "Listening" : "Ready"}</h1>
       <p>{sessionOnline ? "Interview audio is live. The next answer will land here." : "Waiting for the next prompt."}</p>
     </div>
@@ -1009,6 +1026,29 @@ function getRealtimeSocketBaseUrl(baseUrl: string) {
     return baseUrl.replace(/^http:\/\//, "ws://");
   }
   return baseUrl;
+}
+
+function resolveApiBaseUrl(baseUrl: string | undefined, localApiEnabled: boolean | undefined) {
+  if (!baseUrl?.trim()) {
+    return "";
+  }
+  return isLocalApiBaseUrl(baseUrl) && !localApiEnabled ? "" : baseUrl.trim();
+}
+
+function isLocalApiBaseUrl(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    return ["127.0.0.1", "localhost"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function formatRealtimeError(detail: string) {
+  if (/OPENAI_API_KEY/i.test(detail)) {
+    return `服务器未配置 OPENAI_API_KEY，无法启动 Realtime。当前连接：${API_BASE_URL}。`;
+  }
+  return detail;
 }
 
 function mergeTranscriptText(previous: string, next: string) {

@@ -5,5 +5,6 @@ interface Window {
     isElectron: boolean;
     platform: string;
     apiBaseUrl?: string;
+    localApiEnabled?: boolean;
   };
 }

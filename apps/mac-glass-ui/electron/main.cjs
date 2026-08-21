@@ -17,9 +17,26 @@ const writableRoot = path.join(os.tmpdir(), "interview-mac-glass-ui");
 let mainWindow = null;
 let apiProcess = null;
 let apiPort = DEFAULT_API_PORT;
+let privacyModeEnabled = false;
+let privacyModeUpdate = Promise.resolve();
 
 function configuredApiBaseUrl() {
   return (process.env.INTERVIEW_API_BASE_URL || process.env.VITE_API_BASE_URL || DEFAULT_REMOTE_API_BASE_URL).trim();
+}
+
+function configuredApiBaseUrlSource() {
+  if (process.env.INTERVIEW_API_BASE_URL?.trim()) {
+    return "INTERVIEW_API_BASE_URL";
+  }
+  if (process.env.VITE_API_BASE_URL?.trim()) {
+    return "VITE_API_BASE_URL";
+  }
+  return "default";
+}
+
+function configuredLocalApiBaseUrl() {
+  const explicitUrl = (process.env.INTERVIEW_API_BASE_URL || "").trim();
+  return isLocalApiUrl(explicitUrl) ? explicitUrl : "";
 }
 
 function isLocalApiUrl(value) {
@@ -47,7 +64,7 @@ function isRemoteApiUrl(value) {
 }
 
 function configuredApiPort() {
-  const configuredUrl = configuredApiBaseUrl();
+  const configuredUrl = configuredLocalApiBaseUrl() || configuredApiBaseUrl();
   const match = configuredUrl.match(/127\.0\.0\.1:(\d+)|localhost:(\d+)/);
   if (match) {
     return Number(match[1] || match[2]);
@@ -132,10 +149,24 @@ async function waitForApiReady(timeoutMs) {
 
 async function ensureApiServer() {
   const configuredUrl = configuredApiBaseUrl();
-  if (isRemoteApiUrl(configuredUrl)) {
-    process.env.INTERVIEW_API_BASE_URL = configuredUrl;
+  const configuredSource = configuredApiBaseUrlSource();
+  const localApiUrl = configuredLocalApiBaseUrl();
+  if (!localApiUrl) {
+    process.env.INTERVIEW_API_BASE_URL = isRemoteApiUrl(configuredUrl) ? configuredUrl : DEFAULT_REMOTE_API_BASE_URL;
+    process.env.VITE_API_BASE_URL = process.env.INTERVIEW_API_BASE_URL;
+    process.env.INTERVIEW_LOCAL_API_ENABLED = "0";
+    console.log("[glass] using remote api", {
+      baseUrl: process.env.INTERVIEW_API_BASE_URL,
+      source: configuredSource,
+    });
     return;
   }
+
+  console.log("[glass] using local api", {
+    baseUrl: localApiUrl,
+    source: "INTERVIEW_API_BASE_URL",
+  });
+  process.env.INTERVIEW_LOCAL_API_ENABLED = "1";
 
   const candidatePorts = [configuredApiPort(), ...FALLBACK_API_PORTS].filter(
     (port, index, ports) => typeof port === "number" && ports.indexOf(port) === index,
@@ -244,13 +275,12 @@ async function createMainWindow() {
     frame: false,
     fullscreenable: false,
     hasShadow: false,
+    roundedCorners: false,
     show: false,
     skipTaskbar: false,
     title: WINDOW_TITLE,
     transparent: true,
     backgroundColor: "#00000000",
-    vibrancy: process.platform === "darwin" ? "under-window" : undefined,
-    visualEffectState: process.platform === "darwin" ? "active" : undefined,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -300,6 +330,27 @@ async function createMainWindow() {
   await mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 }
 
+async function setDockVisible(visible) {
+  if (process.platform !== "darwin" || !app.dock) {
+    return;
+  }
+  if (visible) {
+    await app.dock.show();
+    return;
+  }
+  app.dock.hide();
+}
+
+async function applyPrivacyMode(enabled) {
+  const nextEnabled = Boolean(enabled);
+  privacyModeEnabled = nextEnabled;
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.setContentProtection(nextEnabled);
+  }
+  await setDockVisible(!nextEnabled);
+  return { enabled: privacyModeEnabled };
+}
+
 function registerShortcuts() {
   globalShortcut.register("CommandOrControl+\\", () => {
     if (!mainWindow) {
@@ -318,15 +369,14 @@ function registerShortcuts() {
   });
 }
 
+ipcMain.handle("glass:get-privacy-mode", () => {
+  return { enabled: privacyModeEnabled };
+});
+
 ipcMain.handle("glass:set-privacy-mode", (_event, enabled) => {
-  const nextEnabled = Boolean(enabled);
-  for (const window of BrowserWindow.getAllWindows()) {
-    window.setContentProtection(nextEnabled);
-  }
-  if (process.platform === "darwin" && app.dock) {
-    nextEnabled ? app.dock.hide() : app.dock.show();
-  }
-  return { enabled: nextEnabled };
+  const update = privacyModeUpdate.then(() => applyPrivacyMode(enabled));
+  privacyModeUpdate = update.catch(() => undefined);
+  return update;
 });
 
 ipcMain.handle("glass:set-window-expanded", (_event, expanded) => {
@@ -347,6 +397,7 @@ ipcMain.handle("glass:close", () => {
 });
 
 app.whenReady().then(async () => {
+  await applyPrivacyMode(false);
   await ensureApiServer();
   await configureSession();
   await createMainWindow();

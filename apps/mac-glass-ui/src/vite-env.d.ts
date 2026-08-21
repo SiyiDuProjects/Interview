@@ -6,6 +6,7 @@ interface Window {
   glassDesktop?: {
     apiBaseUrl: string;
     isElectron: boolean;
+    localApiEnabled?: boolean;
     platform: string;
     invoke: <T = unknown>(channel: string, payload?: unknown) => Promise<T>;
     onCommand: (handler: (command: GlassCommand) => void) => () => void;

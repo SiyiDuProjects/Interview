@@ -1,11 +1,11 @@
-﻿# AGENTS.md
+# AGENTS.md
 
 给后续 Codex/agent 的项目说明。
 
 ## 变更维护
 
-- 完成有意义的代码、配置、部署或文档改动后，除非用户明确要求不要提交，否则创建 git commit。
-- 改动影响安装、启动、部署、架构、环境变量或项目操作说明时，同步更新 `README.md` 和/或 `AGENTS.md`。
+- 遵守 `/Users/bytedance/.codex/AGENTS.md` 里的全局文档与上下文维护规则。
+- 本文件只保留 Interview 特有的 Realtime、桌面端、部署和验证细节。
 
 ## 项目概况
 
@@ -91,20 +91,16 @@ PowerShell 下不要用 `npm`，会被执行策略拦截；用 `npm.cmd`。
 
 - GitHub workflow: `.github/workflows/deploy-server.yml`
 - VPS SSH 用户：`ubuntu`
-- VPS Compose 路径：`/home/ubuntu/muxing`
+- 共享 VPS SSH 入口和私钥规则：见 `/Users/bytedance/.codex/AGENTS.md`
+- VPS Compose 路径：`/home/ubuntu/siyi`
 - VPS 部署路径：`/opt/interview/server`
 - Compose service/container：`interview_api`
 - 端口：`8000`
 - 公网域名：`https://interview.reachard.co`
 
-服务器已有端口不要复用：
+共享私钥路径、权限修复和保密规则在全局 `AGENTS.md` 中维护。新端口分配前先检查共享 VPS 已占用端口；本项目固定使用 `8000`。
 
-- `8080` = sub2api
-- `8787` = connection
-- `20241` = cloudflared metrics
-- `40000` = WARP
-
-生产 `.env` 只放在 `/opt/interview/server/.env`，不要提交到 GitHub。GitHub Actions 只通过 rsync 同步 `apps/server/`，并排除 `.env` / `.env.*`。
+生产 `.env` 只放在 `/opt/interview/server/.env`。按全局规则处理密钥；GitHub Actions 只通过 rsync 同步 `apps/server/`，并排除 `.env` / `.env.*`。
 
 GitHub organization secrets 约定：
 
@@ -113,7 +109,7 @@ GitHub organization secrets 约定：
 
 workflow 兼容仓库级 `DEPLOY_PATH` / `PUBLIC_HEALTH_URL` 作为 fallback。不要在 organization 里用通用 `DEPLOY_PATH` / `PUBLIC_HEALTH_URL` 表示项目专属值，否则多个项目会互相冲突。
 
-Electron 默认使用远程后端 `https://interview.reachard.co`。如果 `INTERVIEW_API_BASE_URL` 或 `VITE_API_BASE_URL` 显式设置为 localhost，才会走本地自动启动/复用逻辑。
+Electron 默认使用远程后端 `https://interview.reachard.co`。如果 `INTERVIEW_API_BASE_URL` 显式设置为 localhost，才会走本地自动启动/复用逻辑；`VITE_API_BASE_URL` 不触发 Electron 本地后端自动启动。
 
 ## Realtime API 注意事项
 

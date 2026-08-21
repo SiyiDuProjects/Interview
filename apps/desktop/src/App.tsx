@@ -14,8 +14,8 @@ import type {
 } from "./types";
 
 const API_BASE_URL =
-  window.interviewDesktop?.apiBaseUrl ||
-  import.meta.env.VITE_API_BASE_URL ||
+  resolveApiBaseUrl(window.interviewDesktop?.apiBaseUrl, window.interviewDesktop?.localApiEnabled) ||
+  resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL, false) ||
   "https://interview.reachard.co";
 const AUTO_FLUSH_MS: Record<Speaker, number> = {
   interviewer: 4200,
@@ -418,6 +418,14 @@ export default function App() {
           return;
         }
 
+        if (payload.type === "error" && !resolved) {
+          const detail = formatRealtimeError(payload.detail ?? `${getCaptureLabel(speaker)}实时转写失败。`);
+          window.clearTimeout(timeoutId);
+          reject(new Error(detail));
+          socket.close();
+          return;
+        }
+
         handleRealtimeSocketMessage(speaker, payload);
       });
 
@@ -503,7 +511,7 @@ export default function App() {
 
   function handleRealtimeSocketMessage(speaker: Speaker, payload: RealtimeMessage) {
     if (payload.type === "error") {
-      const detail = payload.detail ?? `${getCaptureLabel(speaker)}实时转写失败。`;
+      const detail = formatRealtimeError(payload.detail ?? `${getCaptureLabel(speaker)}实时转写失败。`);
       setError(detail);
       setCaptureMessage((current) => ({
         ...current,
@@ -1316,6 +1324,29 @@ function getRealtimeSocketBaseUrl(baseUrl: string) {
     return `ws://${baseUrl.slice("http://".length)}`;
   }
   return baseUrl;
+}
+
+function resolveApiBaseUrl(baseUrl: string | undefined, localApiEnabled: boolean | undefined) {
+  if (!baseUrl?.trim()) {
+    return "";
+  }
+  return isLocalApiBaseUrl(baseUrl) && !localApiEnabled ? "" : baseUrl.trim();
+}
+
+function isLocalApiBaseUrl(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    return ["127.0.0.1", "localhost"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function formatRealtimeError(detail: string) {
+  if (/OPENAI_API_KEY/i.test(detail)) {
+    return `服务器未配置 OPENAI_API_KEY，无法启动 Realtime。当前连接：${API_BASE_URL}。`;
+  }
+  return detail;
 }
 
 function buildRenderedHistory(
