@@ -1,0 +1,30 @@
+{
+  "name": "interview-mac-glass-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5174",
+    "dev:desktop": "concurrently -k \"vite --host 127.0.0.1 --port 5174\" \"wait-on http-get://127.0.0.1:5174 && electron . --renderer-url=http://127.0.0.1:5174\"",
+    "build": "tsc && vite build",
+    "prestart:desktop": "npm run build",
+    "start:desktop": "electron .",
+    "preview": "vite preview --host 127.0.0.1 --port 4174"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "electron": "^35.1.5",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2",
+    "wait-on": "^8.0.3"
+  }
+}
