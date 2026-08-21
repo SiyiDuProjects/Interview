@@ -95,14 +95,14 @@ INTERVIEW_SCREENSHOT_MAX_BYTES=5242880
 后端：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
+cd D:\Projects\Interview\apps\server
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 如果 `.venv` 不存在：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
+cd D:\Projects\Interview\apps\server
 C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -110,7 +110,7 @@ C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\
 桌面端默认连接 `https://interview.reachard.co`：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
+cd D:\Projects\Interview\apps\desktop
 npm.cmd install
 npm.cmd run dev:desktop
 ```
@@ -118,7 +118,7 @@ npm.cmd run dev:desktop
 强制使用本地后端：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
+cd D:\Projects\Interview\apps\desktop
 $env:INTERVIEW_API_BASE_URL="http://127.0.0.1:8000"
 $env:INTERVIEW_ACCESS_TOKEN=""
 npm.cmd run dev:desktop
@@ -142,7 +142,7 @@ Electron 需要：
 后端：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
+cd D:\Projects\Interview\apps\server
 .\.venv\Scripts\python.exe -m unittest tests.test_realtime
 .\.venv\Scripts\python.exe -m unittest tests.test_interview_flow tests.test_latency
 ```
@@ -150,7 +150,7 @@ cd C:\Users\Administrator\Desktop\Projects\Interview\apps\server
 前端：
 
 ```powershell
-cd C:\Users\Administrator\Desktop\Projects\Interview\apps\desktop
+cd D:\Projects\Interview\apps\desktop
 npm.cmd run build
 ```
 
