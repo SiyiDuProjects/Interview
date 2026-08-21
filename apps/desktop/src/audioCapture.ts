@@ -1,4 +1,4 @@
-import { type Speaker } from "./types";
+import type { Speaker } from "./types";
 
 export interface AudioCaptureHandle {
   snapshot?: () => Promise<string>;
@@ -7,9 +7,8 @@ export interface AudioCaptureHandle {
 
 interface LocalAudioCaptureOptions {
   stream: MediaStream;
-  chunkDurationMs: number;
-  minLevel: number;
   onChunk: (chunk: ArrayBuffer) => void;
+  onEnded?: () => void;
 }
 
 const DISPLAY_MEDIA_CONSTRAINTS: DisplayMediaStreamOptions = {
@@ -29,6 +28,9 @@ const USER_MEDIA_CONSTRAINTS: MediaStreamConstraints = {
 
 const TARGET_SAMPLE_RATE = 24000;
 const SCRIPT_BUFFER_SIZE = 1024;
+const SCREENSHOT_MAX_DIMENSION = 1600;
+const SCREENSHOT_MAX_BYTES = 4_500_000;
+
 export async function requestCaptureStream(speaker: Speaker): Promise<MediaStream> {
   if (speaker === "candidate") {
     return navigator.mediaDevices.getUserMedia(USER_MEDIA_CONSTRAINTS);
@@ -37,7 +39,7 @@ export async function requestCaptureStream(speaker: Speaker): Promise<MediaStrea
   const stream = await navigator.mediaDevices.getDisplayMedia(DISPLAY_MEDIA_CONSTRAINTS);
   if (stream.getAudioTracks().length === 0) {
     stream.getTracks().forEach((track) => track.stop());
-    throw new Error("没有采集到系统音频，请确认共享时勾选了音频。");
+    throw new Error("没有采集到系统音频，请确认共享屏幕时允许音频。");
   }
   return stream;
 }
@@ -45,17 +47,28 @@ export async function requestCaptureStream(speaker: Speaker): Promise<MediaStrea
 export function startLocalAudioCapture(options: LocalAudioCaptureOptions): AudioCaptureHandle {
   const audioTracks = options.stream.getAudioTracks();
   if (audioTracks.length === 0) {
-    throw new Error("当前媒体流里没有音频轨道。");
+    throw new Error("当前媒体流没有音频轨道。");
   }
 
-  const audioOnlyStream = new MediaStream(audioTracks);
   const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
-  const sourceNode = audioContext.createMediaStreamSource(audioOnlyStream);
+  const sourceNode = audioContext.createMediaStreamSource(new MediaStream(audioTracks));
   const processorNode = audioContext.createScriptProcessor(SCRIPT_BUFFER_SIZE, 1, 1);
   const gainNode = audioContext.createGain();
   gainNode.gain.value = 0;
 
   let stopped = false;
+  let endedNotified = false;
+  const handleTrackEnded = () => {
+    if (stopped || endedNotified) {
+      return;
+    }
+    endedNotified = true;
+    options.onEnded?.();
+  };
+  options.stream.getTracks().forEach((track) => {
+    track.addEventListener("ended", handleTrackEnded);
+  });
+
   processorNode.onaudioprocess = (event) => {
     if (stopped) {
       return;
@@ -63,16 +76,10 @@ export function startLocalAudioCapture(options: LocalAudioCaptureOptions): Audio
 
     const input = event.inputBuffer.getChannelData(0);
     const pcm = new Int16Array(input.length);
-    let sum = 0;
-
     for (let index = 0; index < input.length; index += 1) {
       const sample = clampSample(input[index]);
       pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-      sum += sample * sample;
     }
-
-    // Keep upstream realtime ASR fed with continuous audio, including silence,
-    // so word boundaries are detected without waiting for the next spoken token.
     options.onChunk(pcm.buffer.slice(0));
   };
 
@@ -81,7 +88,6 @@ export function startLocalAudioCapture(options: LocalAudioCaptureOptions): Audio
   gainNode.connect(audioContext.destination);
 
   const videoTracks = options.stream.getVideoTracks();
-
   return {
     snapshot:
       videoTracks.length > 0
@@ -95,10 +101,17 @@ export function startLocalAudioCapture(options: LocalAudioCaptureOptions): Audio
       processorNode.disconnect();
       sourceNode.disconnect();
       gainNode.disconnect();
-      options.stream.getTracks().forEach((track) => track.stop());
+      options.stream.getTracks().forEach((track) => {
+        track.removeEventListener("ended", handleTrackEnded);
+        track.stop();
+      });
       void audioContext.close();
     },
   };
+}
+
+export function getCaptureLabel(speaker: Speaker): string {
+  return speaker === "candidate" ? "麦克风" : "系统音频";
 }
 
 async function captureVideoFrameDataUrl(stream: MediaStream): Promise<string> {
@@ -108,33 +121,36 @@ async function captureVideoFrameDataUrl(stream: MediaStream): Promise<string> {
   await video.play();
 
   try {
-    const width = video.videoWidth || 1280;
-    const height = video.videoHeight || 720;
     const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
+    const sourceWidth = video.videoWidth || 1280;
+    const sourceHeight = video.videoHeight || 720;
+    const scale = Math.min(1, SCREENSHOT_MAX_DIMENSION / Math.max(sourceWidth, sourceHeight));
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) {
       throw new Error("无法创建截图画布。");
     }
-    context.drawImage(video, 0, 0, width, height);
-    return canvas.toDataURL("image/jpeg", 0.82);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.8, 0.68, 0.56, 0.44]) {
+      const imageData = canvas.toDataURL("image/jpeg", quality);
+      if (dataUrlByteLength(imageData) <= SCREENSHOT_MAX_BYTES) {
+        return imageData;
+      }
+    }
+    throw new Error("截图压缩后仍然过大，请降低屏幕分辨率后重试。");
   } finally {
     video.pause();
     video.srcObject = null;
   }
 }
 
-export function getCaptureLabel(speaker: Speaker): string {
-  return speaker === "candidate" ? "麦克风" : "系统音频";
+function clampSample(sample: number) {
+  return Math.max(-1, Math.min(1, sample));
 }
 
-function clampSample(sample: number) {
-  if (sample > 1) {
-    return 1;
-  }
-  if (sample < -1) {
-    return -1;
-  }
-  return sample;
+function dataUrlByteLength(value: string) {
+  const encoded = value.slice(value.indexOf(",") + 1);
+  const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
+  return Math.ceil((encoded.length * 3) / 4) - padding;
 }

@@ -8,3 +8,14 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+
+# Removed local ASR/model artifacts must not return.
+apps/server/models/vosk-model-*/
+apps/server/vosk-model-*.zip
+apps/server/tmp-native-asr*.ps1
+apps/server/tmp-native-asr*.wav
+apps/server/tmp-vosk-*.wav
+
+# The deploy workflow stages the shared Vite build here.
+apps/server/web/*
+!apps/server/web/.gitkeep

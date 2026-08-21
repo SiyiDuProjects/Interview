@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "apple-hig-designer": {
+      "source": "smithery.ai",
+      "sourceType": "well-known",
+      "computedHash": "84230cd900ef31e499d7e66a05c7b4908773cc33f090e1e16d108ee8fcf697ae"
+    }
+  }
+}

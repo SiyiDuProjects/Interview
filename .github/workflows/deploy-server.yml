@@ -5,6 +5,12 @@ on:
     branches: ["main"]
     paths:
       - "apps/server/**"
+      - "apps/desktop/index.html"
+      - "apps/desktop/package.json"
+      - "apps/desktop/package-lock.json"
+      - "apps/desktop/src/**"
+      - "apps/desktop/tsconfig.json"
+      - "apps/desktop/vite.config.ts"
       - ".github/workflows/deploy-server.yml"
   workflow_dispatch:
 
@@ -32,6 +38,19 @@ jobs:
           cache: pip
           cache-dependency-path: apps/server/requirements.txt
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Build shared web client
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
@@ -48,6 +67,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Stage shared web client
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+          rm -rf ../server/web
+          mkdir -p ../server/web
+          cp -a dist/. ../server/web/
 
       - name: Configure SSH
         env:
