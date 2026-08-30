@@ -121,6 +121,32 @@ jobs:
             --exclude '.pytest_cache' \
             apps/server/ deploy-server:"$DEPLOY_PATH"/
 
+      - name: Update production model configuration
+        env:
+          DEPLOY_PATH: ${{ secrets.INTERVIEW_DEPLOY_PATH || secrets.DEPLOY_PATH }}
+        run: |
+          test -n "$DEPLOY_PATH"
+          ssh deploy-server "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          env_file="$DEPLOY_PATH/.env"
+          test -f "$env_file"
+          cp -p "$env_file" "$env_file.bak.interview-v4-$(date -u +%Y%m%dT%H%M%SZ)"
+          for setting in \
+            OPENAI_REALTIME_MODEL=gpt-realtime-2.1 \
+            OPENAI_REALTIME_TRANSCRIPTION_MODEL=gpt-realtime-whisper \
+            OPENAI_REALTIME_REASONING_EFFORT=low \
+            OPENAI_CODE_MODEL=gpt-5.6-sol \
+            OPENAI_CODE_REASONING_EFFORT=high
+          do
+            key="${setting%%=*}"
+            if grep -q "^${key}=" "$env_file"; then
+              sed -i "s|^${key}=.*|${setting}|" "$env_file"
+            else
+              printf '\n%s\n' "$setting" >> "$env_file"
+            fi
+          done
+          REMOTE
+
       - name: Rebuild container
         env:
           COMPOSE_PATH: ${{ secrets.COMPOSE_PATH }}
