@@ -60,6 +60,7 @@ export default function App() {
   const [accessToken, setAccessToken] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [initializationFailed, setInitializationFailed] = useState(false);
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const sessionRef = useRef<InterviewSession | null>(null);
@@ -74,6 +75,7 @@ export default function App() {
   const operationRef = useRef(0);
   const activeRef = useRef(false);
   const timelineEndRef = useRef<HTMLDivElement | null>(null);
+  const stopCancelRef = useRef<HTMLButtonElement | null>(null);
 
   const answerList = useMemo(
     () => answers.order.map((responseId) => answers.byId[responseId]).filter(Boolean),
@@ -88,6 +90,20 @@ export default function App() {
   useEffect(() => {
     timelineEndRef.current?.scrollIntoView({ block: "end" });
   }, [answers.order.length]);
+
+  useEffect(() => {
+    if (!stopConfirmOpen) {
+      return;
+    }
+    stopCancelRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && sessionPhase !== "stopping") {
+        setStopConfirmOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [sessionPhase, stopConfirmOpen]);
 
   useEffect(() => {
     disposedRef.current = false;
@@ -400,6 +416,7 @@ export default function App() {
     if (!session || sessionPhase === "stopping") {
       return;
     }
+    setStopConfirmOpen(false);
     setError(null);
     setSessionPhase("stopping");
     try {
@@ -656,6 +673,7 @@ export default function App() {
     if (!sessionRef.current) {
       return;
     }
+    setStopConfirmOpen(false);
     operationRef.current += 1;
     hostEnsurePromiseRef.current = null;
     sessionRef.current = null;
@@ -771,10 +789,10 @@ export default function App() {
             <button
               type="button"
               className="button danger"
-              onClick={() => void stopInterview()}
+              onClick={() => setStopConfirmOpen(true)}
               disabled={sessionPhase === "stopping"}
             >
-              {sessionPhase === "stopping" ? "结束中…" : "停止"}
+              {sessionPhase === "stopping" ? "结束中…" : "结束面试"}
             </button>
           ) : (
             <button
@@ -867,6 +885,37 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {stopConfirmOpen ? (
+        <div className="dialog-backdrop">
+          <section
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="stop-dialog-title"
+            aria-describedby="stop-dialog-description"
+          >
+            <p className="eyebrow">结束面试</p>
+            <h2 id="stop-dialog-title">确定结束当前面试？</h2>
+            <p id="stop-dialog-description">
+              本场回答、转写和模型上下文会从服务端清除，结束后无法恢复。
+            </p>
+            <div className="confirm-dialog-actions">
+              <button
+                ref={stopCancelRef}
+                type="button"
+                className="button secondary"
+                onClick={() => setStopConfirmOpen(false)}
+              >
+                继续面试
+              </button>
+              <button type="button" className="button danger" onClick={() => void stopInterview()}>
+                确认结束
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
