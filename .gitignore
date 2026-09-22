@@ -22,3 +22,6 @@ apps/server/tmp-vosk-*.wav
 # The deploy workflow stages the shared Vite build here.
 apps/server/web/*
 !apps/server/web/.gitkeep
+
+# Private candidate resume is local runtime context, never source control.
+/apps/server/context/resume.txt

@@ -6,10 +6,12 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 \
+    && python -m pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY context ./context
+# Private interview material is supplied by a read-only runtime mount.
+RUN mkdir -p /app/context
 COPY web ./web
 
 EXPOSE 8000

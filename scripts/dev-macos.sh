@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_DIR="$ROOT_DIR/apps/server"
 DESKTOP_DIR="${INTERVIEW_DESKTOP_DIR:-$ROOT_DIR/apps/desktop}"
-DEFAULT_REMOTE_API_BASE_URL="https://interview.reachard.co"
+DEFAULT_REMOTE_API_BASE_URL="https://interview.siyidu.com"
 
 if [ ! -x "$SERVER_DIR/.venv/bin/python" ]; then
   echo "Missing backend virtualenv. Run scripts/setup-macos.sh first." >&2

@@ -5,16 +5,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+REALTIME_PROTOCOL_VERSION = "realtime-interview-v5"
+
 
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
-    openai_realtime_model: str = "gpt-realtime-2.1"
-    openai_realtime_transcription_model: str = "gpt-realtime-whisper"
-    openai_realtime_transcription_language: str = ""
-    openai_realtime_reasoning_effort: str = "low"
-    openai_code_model: str = "gpt-5.6-sol"
+    openai_live_model: str = "gpt-live-1"
+    openai_realtime_transcription_model: str = "gpt-live-transcribe"
+    openai_realtime_transcription_languages: tuple[str, ...] = ()
+    openai_code_model: str = "gpt-6-astra"
     openai_code_reasoning_effort: str = "high"
     openai_code_timeout_seconds: float = 45.0
     interview_access_token: str = ""
@@ -60,16 +61,15 @@ def get_settings() -> Settings:
     return Settings(
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         openai_base_url=_validated_openai_base_url(),
-        openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1").strip()
-        or "gpt-realtime-2.1",
+        openai_live_model=os.getenv("OPENAI_LIVE_MODEL", "gpt-live-1").strip()
+        or "gpt-live-1",
         openai_realtime_transcription_model=os.getenv(
             "OPENAI_REALTIME_TRANSCRIPTION_MODEL",
-            "gpt-realtime-whisper",
+            "gpt-live-transcribe",
         ).strip()
-        or "gpt-realtime-whisper",
-        openai_realtime_transcription_language=os.getenv("OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE", "").strip(),
-        openai_realtime_reasoning_effort=os.getenv("OPENAI_REALTIME_REASONING_EFFORT", "low").strip() or "low",
-        openai_code_model=os.getenv("OPENAI_CODE_MODEL", "gpt-5.6-sol").strip() or "gpt-5.6-sol",
+        or "gpt-live-transcribe",
+        openai_realtime_transcription_languages=_csv_env("OPENAI_REALTIME_TRANSCRIPTION_LANGUAGES", ()),
+        openai_code_model=os.getenv("OPENAI_CODE_MODEL", "gpt-6-astra").strip() or "gpt-6-astra",
         openai_code_reasoning_effort=os.getenv("OPENAI_CODE_REASONING_EFFORT", "high").strip() or "high",
         openai_code_timeout_seconds=code_timeout_seconds,
         interview_access_token=os.getenv("INTERVIEW_ACCESS_TOKEN", "").strip(),

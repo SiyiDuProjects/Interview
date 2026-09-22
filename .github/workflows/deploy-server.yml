@@ -9,6 +9,7 @@ on:
       - "apps/desktop/package.json"
       - "apps/desktop/package-lock.json"
       - "apps/desktop/src/**"
+      - "apps/desktop/public/**"
       - "apps/desktop/tsconfig.json"
       - "apps/desktop/vite.config.ts"
       - ".github/workflows/deploy-server.yml"
@@ -16,7 +17,7 @@ on:
 
 concurrency:
   group: deploy-interview-server
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -49,16 +50,17 @@ jobs:
         working-directory: apps/desktop
         run: |
           npm ci
+          npm run test:ui
+          npm run test:capture
           npm run build
 
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip==26.2.1
+          python -m pip install -r requirements.txt
 
-      - name: Run realtime tests
-        run: python -m unittest tests.test_realtime
-
-      - name: Run API tests
-        run: python -m unittest tests.test_interview_flow tests.test_latency
+      - name: Run backend regression tests
+        run: python -m unittest discover -s tests
 
   deploy:
     needs: validate
@@ -108,72 +110,34 @@ jobs:
             StrictHostKeyChecking yes
           EOF
 
-      - name: Sync server files
+      - name: Stage release without changing the running server
         env:
           DEPLOY_PATH: ${{ secrets.INTERVIEW_DEPLOY_PATH || secrets.DEPLOY_PATH }}
         run: |
           test -n "$DEPLOY_PATH"
-          ssh deploy-server "mkdir -p '$DEPLOY_PATH'"
-          rsync -az --delete \
+          STAGING_PATH="${DEPLOY_PATH}.incoming-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh deploy-server "mkdir -p -- $(printf '%q' "$STAGING_PATH")"
+          rsync -az \
             --exclude '.env' \
             --exclude '.env.*' \
+            --exclude '.venv' \
             --exclude '__pycache__' \
             --exclude '.pytest_cache' \
-            apps/server/ deploy-server:"$DEPLOY_PATH"/
+            apps/server/ "deploy-server:$STAGING_PATH/"
 
-      - name: Update production model configuration
+      - name: Drain, release, verify protocol and models, and retain rollback
         env:
           DEPLOY_PATH: ${{ secrets.INTERVIEW_DEPLOY_PATH || secrets.DEPLOY_PATH }}
-        run: |
-          test -n "$DEPLOY_PATH"
-          ssh deploy-server "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
-          set -euo pipefail
-          env_file="$DEPLOY_PATH/.env"
-          test -f "$env_file"
-          cp -p "$env_file" "$env_file.bak.interview-v4-$(date -u +%Y%m%dT%H%M%SZ)"
-          for setting in \
-            OPENAI_REALTIME_MODEL=gpt-realtime-2.1 \
-            OPENAI_REALTIME_TRANSCRIPTION_MODEL=gpt-realtime-whisper \
-            OPENAI_REALTIME_REASONING_EFFORT=low \
-            OPENAI_CODE_MODEL=gpt-5.6-sol \
-            OPENAI_CODE_REASONING_EFFORT=high
-          do
-            key="${setting%%=*}"
-            if grep -q "^${key}=" "$env_file"; then
-              sed -i "s|^${key}=.*|${setting}|" "$env_file"
-            else
-              printf '\n%s\n' "$setting" >> "$env_file"
-            fi
-          done
-          REMOTE
-
-      - name: Rebuild container
-        env:
           COMPOSE_PATH: ${{ secrets.COMPOSE_PATH }}
-        run: |
-          test -n "$COMPOSE_PATH"
-          ssh deploy-server "COMPOSE_PATH='$COMPOSE_PATH' bash -s" <<'REMOTE'
-          set -euo pipefail
-          cd "$COMPOSE_PATH"
-          sudo docker compose build interview_api
-          if ! sudo docker compose up -d --no-build --force-recreate --remove-orphans interview_api; then
-            sudo docker compose rm -fs interview_api || true
-            sudo docker rm -f interview_api 2>/dev/null || true
-            sudo docker compose up -d --no-build --force-recreate --remove-orphans interview_api
-          fi
-          sudo docker logs --tail=80 interview_api
-          REMOTE
-
-      - name: Health check
-        env:
           PUBLIC_HEALTH_URL: ${{ secrets.INTERVIEW_PUBLIC_HEALTH_URL || secrets.PUBLIC_HEALTH_URL }}
         run: |
+          test -n "$DEPLOY_PATH"
+          test -n "$COMPOSE_PATH"
           test -n "$PUBLIC_HEALTH_URL"
-          for attempt in $(seq 1 24); do
-            if curl --fail --silent --show-error "$PUBLIC_HEALTH_URL"; then
-              exit 0
-            fi
-            echo "Health check failed; retrying in 5 seconds ($attempt/24)."
-            sleep 5
-          done
-          curl --fail --silent --show-error "$PUBLIC_HEALTH_URL"
+          RELEASE_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          STAGING_PATH="${DEPLOY_PATH}.incoming-${RELEASE_ID}"
+          # The remote program atomically refuses active interviews before
+          # touching deployed source/.env. It never removes shared orphans.
+          printf -v remote_command 'sudo python3 %q --deploy-path %q --compose-path %q --staging-path %q --health-url %q --release-id %q' \
+            "$STAGING_PATH/deploy/release.py" "$DEPLOY_PATH" "$COMPOSE_PATH" "$STAGING_PATH" "$PUBLIC_HEALTH_URL" "$RELEASE_ID"
+          ssh deploy-server "$remote_command"

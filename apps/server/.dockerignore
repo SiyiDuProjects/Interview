@@ -5,3 +5,6 @@ __pycache__
 .pytest_cache
 *.pyc
 tests
+
+# Interview background belongs to the read-only runtime mount, never the image.
+context

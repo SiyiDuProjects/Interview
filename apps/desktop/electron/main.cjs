@@ -5,22 +5,30 @@ const http = require("node:http");
 const nodeNet = require("node:net");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
+const { loadDesktopEnvironment } = require("./desktop-environment.cjs");
+const { FLOATING_WINDOW_OPTIONS, createFloatingControls } = require("./floating-window.cjs");
+const { createScreenCaptureService } = require("./screen-capture.cjs");
+const { createRendererRecovery } = require("./renderer-recovery.cjs");
 const {
   app,
   BrowserWindow,
   desktopCapturer,
+  dialog,
   ipcMain,
   Menu,
   net: electronNet,
   nativeImage,
   session,
+  screen,
   shell,
   Tray,
 } = require("electron");
 
+loadDesktopEnvironment();
+
 const WINDOW_TITLE = "Sage";
 const DEFAULT_API_PORT = 8000;
-const DEFAULT_REMOTE_API_BASE_URL = "https://interview.reachard.co";
+const DEFAULT_REMOTE_API_BASE_URL = "https://interview.siyidu.com";
 const FALLBACK_API_PORTS = [8000, 8001];
 const API_START_TIMEOUT_MS = 15000;
 const API_HEALTH_MAX_BYTES = 64 * 1024;
@@ -33,9 +41,13 @@ const writableRoot = path.join(os.tmpdir(), "interview-copilot-electron");
 let apiProcess = null;
 let apiPort = DEFAULT_API_PORT;
 let mainWindow = null;
+let floatingControls = null;
 let tray = null;
 let isQuitting = false;
 let trustedRendererUrl = "";
+const screenCapture = createScreenCaptureService(desktopCapturer, screen);
+const rendererRecovery = createRendererRecovery();
+let rendererRecoveryTimer = null;
 
 function isLoopbackHostname(hostname) {
   return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(hostname);
@@ -94,6 +106,38 @@ async function readApiError(response) {
 }
 
 function configureIpcHandlers() {
+  ipcMain.handle("window:state", (event) => {
+    assertTrustedIpcSender(event);
+    return { ...floatingControls.getState(), recoveryNotice: rendererRecovery.getNotice() };
+  });
+  ipcMain.handle("window:collapse", (event, value) => {
+    assertTrustedIpcSender(event);
+    return floatingControls.setCollapsed(value);
+  });
+  ipcMain.handle("window:pin", (event, value) => {
+    assertTrustedIpcSender(event);
+    return floatingControls.setPinned(value);
+  });
+  ipcMain.handle("window:code", (event, value) => {
+    assertTrustedIpcSender(event);
+    return floatingControls.setCodeExpanded(value);
+  });
+  ipcMain.handle("window:hide", (event) => {
+    assertTrustedIpcSender(event);
+    floatingControls.hide();
+  });
+  ipcMain.handle("screen:list-sources", async (event) => {
+    assertTrustedIpcSender(event);
+    return screenCapture.listSources();
+  });
+  ipcMain.handle("screen:select-source", async (event, sourceId) => {
+    assertTrustedIpcSender(event);
+    return screenCapture.selectSource(sourceId);
+  });
+  ipcMain.handle("screen:capture", async (event) => {
+    assertTrustedIpcSender(event);
+    return screenCapture.captureSnapshot();
+  });
   ipcMain.handle("interview:create", async (event, apiBaseUrl) => {
     assertTrustedIpcSender(event);
     const response = await electronNet.fetch(resolveApiEndpoint(apiBaseUrl, "/api/interviews"), {
@@ -103,6 +147,8 @@ function configureIpcHandlers() {
         "Content-Type": "application/json",
       },
       body: "{}",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
@@ -137,6 +183,8 @@ function configureIpcHandlers() {
       resolveApiEndpoint(apiBaseUrl, `/api/interviews/${encodeURIComponent(interviewId)}`),
       {
         method: "DELETE",
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
         headers: {
           Accept: "application/json",
           Authorization: `Bearer ${sessionToken}`,
@@ -319,7 +367,7 @@ function readApiHealth(port) {
 
 async function isApiCompatible(port) {
   const health = await readApiHealth(port);
-  return health?.status === "ok" && health?.realtime_protocol === "realtime-interview-v4";
+  return health?.status === "ok" && health?.realtime_protocol === "realtime-interview-v5";
 }
 
 function findFreePort() {
@@ -452,18 +500,9 @@ async function configureSession() {
       }
 
       try {
-        const sources = await desktopCapturer.getSources({
-          types: ["screen"],
-          thumbnailSize: { width: 0, height: 0 },
-        });
-
-        if (sources.length === 0) {
-          callback({});
-          return;
-        }
-
+        const source = await screenCapture.getAudioCaptureSource();
         callback({
-          video: request.videoRequested ? sources[0] : undefined,
+          video: request.videoRequested ? source : undefined,
           audio: request.audioRequested ? "loopback" : undefined,
         });
       } catch {
@@ -538,13 +577,9 @@ async function createMainWindow() {
   trustedRendererUrl = rendererUrl || packagedRendererUrl();
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 900,
-    minHeight: 560,
+    ...FLOATING_WINDOW_OPTIONS,
     autoHideMenuBar: true,
     title: WINDOW_TITLE,
-    backgroundColor: "#f6f3ed",
     webPreferences: {
       preload: preloadPath,
       additionalArguments: [`--interview-api-base-url=${configuredApiBaseUrl()}`],
@@ -554,6 +589,8 @@ async function createMainWindow() {
       sandbox: true,
     },
   });
+  floatingControls = createFloatingControls(mainWindow, screen);
+  mainWindow.once("ready-to-show", () => mainWindow?.show());
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -588,6 +625,26 @@ async function createMainWindow() {
 
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("[desktop] renderer process gone", details);
+    if (isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+    if (rendererRecoveryTimer) clearTimeout(rendererRecoveryTimer);
+    const recovery = rendererRecovery.recordCrash();
+    if (!recovery.retry) {
+      mainWindow.show();
+      void dialog.showMessageBox(mainWindow, {
+        type: "error",
+        title: "Sage 需要重新打开",
+        message: recovery.notice,
+        buttons: ["知道了"],
+      });
+      return;
+    }
+    const recoveringWindow = mainWindow;
+    rendererRecoveryTimer = setTimeout(() => {
+      rendererRecoveryTimer = null;
+      if (isQuitting || mainWindow !== recoveringWindow || recoveringWindow.isDestroyed()) return;
+      recoveringWindow.show();
+      recoveringWindow.webContents.reload();
+    }, 750);
   });
 
   mainWindow.on("close", (event) => {
@@ -646,6 +703,8 @@ if (!hasSingleInstanceLock) {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  if (rendererRecoveryTimer) clearTimeout(rendererRecoveryTimer);
+  rendererRecoveryTimer = null;
   stopApiServer();
 });
 

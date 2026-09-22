@@ -1,4 +1,7 @@
-fastapi==0.116.1
+fastapi==0.141.1
+starlette==1.6.0
+anyio==4.14.2
+idna==3.15
 uvicorn==0.35.0
 pydantic==2.11.7
 httpx==0.28.1

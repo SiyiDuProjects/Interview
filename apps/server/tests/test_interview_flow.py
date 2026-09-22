@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -36,17 +37,17 @@ class InterviewApiTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENAI_REALTIME_MODEL": "gpt-realtime-2.1",
-                "OPENAI_REALTIME_TRANSCRIPTION_MODEL": "gpt-realtime-whisper",
+                "OPENAI_LIVE_MODEL": "gpt-live-1",
+                "OPENAI_REALTIME_TRANSCRIPTION_MODEL": "gpt-live-transcribe",
             },
         ):
             response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["realtime_model"], "gpt-realtime-2.1")
-        self.assertEqual(data["realtime_transcription_model"], "gpt-realtime-whisper")
-        self.assertEqual(data["code_model"], "gpt-5.6-sol")
-        self.assertEqual(data["realtime_protocol"], "realtime-interview-v4")
+        self.assertEqual(data["live_model"], "gpt-live-1")
+        self.assertEqual(data["realtime_transcription_model"], "gpt-live-transcribe")
+        self.assertEqual(data["code_model"], "gpt-6-astra")
+        self.assertEqual(data["realtime_protocol"], "realtime-interview-v5")
 
     def test_remote_openai_base_url_requires_https(self) -> None:
         with patch.dict(os.environ, {"OPENAI_BASE_URL": "http://api.example.com/v1"}):
@@ -128,6 +129,104 @@ class InterviewApiTests(unittest.TestCase):
             websocket.send_json({"type": "authenticate", "token": session["capture_token"]})
             with self.assertRaises(WebSocketDisconnect):
                 websocket.receive_json()
+
+    def test_unexpected_websocket_failure_does_not_expose_provider_exception(self) -> None:
+        session = self.create_interview()
+        path = f"/ws/interviews/{session['interview_id']}/client"
+
+        async def broken_serve(runtime, websocket, role):
+            await websocket.accept()
+            raise RuntimeError("provider.example/private?token=test-secret response body")
+
+        with patch.object(InterviewRuntime, "serve", new=broken_serve):
+            with self.client.websocket_connect(path) as websocket:
+                event = websocket.receive_json()
+                with self.assertRaises(WebSocketDisconnect):
+                    websocket.receive_json()
+
+        self.assertEqual(event, {
+            "type": "error", "detail": "The interview connection failed. Reconnect to restore the session.",
+        })
+
+    def test_authenticated_idle_channels_answer_heartbeats_without_opening_models(self) -> None:
+        session = self.create_interview()
+        ensure_main, ensure_candidate = AsyncMock(), AsyncMock()
+        with patch.object(InterviewRuntime, "ensure_main", ensure_main), patch.object(InterviewRuntime, "ensure_candidate", ensure_candidate):
+            for channel in ("client", "interviewer", "candidate"):
+                with self.client.websocket_connect(f"/ws/interviews/{session['interview_id']}/{channel}") as websocket:
+                    token = session["session_token" if channel == "client" else "capture_token"]
+                    websocket.send_json({"type": "authenticate", "token": token})
+                    ready = websocket.receive_json()
+                    self.assertEqual(ready["realtime_protocol"], "realtime-interview-v5")
+                    websocket.send_json({"type": "ping"})
+                    snapshot = []
+                    while True:
+                        event = websocket.receive_json()
+                        if event["type"] == "pong":
+                            break
+                        snapshot.append(event)
+                    if channel == "client":
+                        metadata = next(event for event in snapshot if event["type"] == "context_status")
+                        self.assertEqual(set(metadata), {"type", "documents_count", "characters_count"})
+        ensure_main.assert_not_awaited()
+        ensure_candidate.assert_not_awaited()
+
+    def test_end_to_end_dual_capture_captions_and_browser_reconnect_with_fake_providers(self) -> None:
+        from tests.test_realtime import FakeUpstream
+        from app.services import openai_realtime as rt
+        class Provider(FakeUpstream):
+            async def send(self, payload):
+                await super().send(payload)
+                event = json.loads(payload)
+                if event["type"] == "session.input_audio.append":
+                    self.queue.put_nowait(json.dumps({"type": "session.input_transcript.delta", "delta": "Explain a hash map", "end_ms": 100}))
+                    self.queue.put_nowait(json.dumps({"type": "session.output_transcript.delta", "delta": "Use keys for direct lookup.", "end_ms": 200}))
+                elif event["type"] == "input_audio_buffer.append":
+                    self.queue.put_nowait(json.dumps({"type": "conversation.item.input_audio_transcription.completed", "item_id": "candidate-one", "transcript": "I chose Python"}))
+        main, candidate = Provider(), Provider()
+        async def connect(*, kind):
+            return main if kind == "main" else candidate
+        def until(socket, event_type):
+            for _ in range(100):
+                event = socket.receive_json()
+                if event["type"] == event_type:
+                    return event
+            self.fail(f"Did not receive {event_type}")
+        session = self.create_interview()
+        path = f"/ws/interviews/{session['interview_id']}"
+        # One ASGI event loop for all three sockets, matching production.
+        with self.client, patch.object(rt, "_connect_openai_realtime", connect):
+            with self.client.websocket_connect(path + "/interviewer") as interviewer, \
+                    self.client.websocket_connect(path + "/candidate") as microphone, \
+                    self.client.websocket_connect(path + "/client") as ui:
+                for socket in (interviewer, microphone):
+                    socket.send_json({"type": "authenticate", "token": session["capture_token"]})
+                    until(socket, "session_ready")
+                    socket.send_json({"type": "capture_status", "phase": "ready"})
+                    socket.send_json({"type": "ping"})
+                    until(socket, "pong")
+                ui.send_json({"type": "authenticate", "token": session["session_token"]})
+                until(ui, "session_metrics")
+                ui.send_json({"type": "start_interview"})
+                until(interviewer, "capture_start")
+                until(microphone, "capture_start")
+                self.assertTrue(until(ui, "interview_state")["active"])
+                interviewer.send_bytes(b"\x01\x00" * 1024)
+                answer = until(ui, "answer_delta")
+                microphone.send_bytes(b"\x02\x00" * 1024)
+                while until(ui, "transcript_final").get("speaker") != "candidate":
+                    pass
+                self.assertEqual(answer["delta"], "Use keys for direct lookup.")
+                self.assertTrue(any(e["type"] == "session.input_audio.append" for e in main.messages))
+                self.assertFalse(any(e["type"] == "input_audio_buffer.append" for e in main.messages))
+                self.assertTrue(any(e["type"] == "input_audio_buffer.append" for e in candidate.messages))
+                with self.client.websocket_connect(path + "/client") as browser:
+                    browser.send_json({"type": "authenticate", "token": session["session_token"]})
+                    transcript = until(browser, "transcript_snapshot")
+                    restored = until(browser, "answer_snapshot")
+                    self.assertTrue(any(t["text"] == "I chose Python" and t["speaker"] == "candidate" for t in transcript["turns"]))
+                    self.assertEqual(restored["response_id"], answer["response_id"])
+                    self.assertEqual(restored["text"], answer["delta"])
 
     def test_electron_file_origin_can_connect_after_token_authentication(self) -> None:
         session = self.create_interview()

@@ -15,6 +15,8 @@ interface SessionClientCallbacks {
 
 const READY_TIMEOUT_MS = 10_000;
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000];
+export const REALTIME_PROTOCOL = "realtime-interview-v5";
+export const INCOMPATIBLE_SERVER = "服务端版本与客户端不匹配。请先部署新版后端，再连接面试；当前未启动采集会话。";
 
 export class SessionClient {
   private socket: WebSocket | null = null;
@@ -37,7 +39,7 @@ export class SessionClient {
     try {
       await this.openSocket(false);
     } catch (error) {
-      this.active = false;
+      this.stop();
       throw error;
     }
   }
@@ -105,12 +107,12 @@ export class SessionClient {
             token: this.session.session_token,
           })
         ) {
-          socket.close(1008, "authentication failed");
+          socket.close(4008, "authentication failed");
         }
       });
 
       socket.addEventListener("message", (message) => {
-        if (typeof message.data !== "string") {
+        if (!this.active || this.socket !== socket || typeof message.data !== "string") {
           return;
         }
         const event = parseServerEvent(message.data);
@@ -118,6 +120,15 @@ export class SessionClient {
           return;
         }
         if (event.type === "session_ready") {
+          if (event.realtime_protocol !== REALTIME_PROTOCOL) {
+            this.active = false;
+            failBeforeReady(INCOMPATIBLE_SERVER);
+            this.callbacks.onError(INCOMPATIBLE_SERVER);
+            this.callbacks.onConnectionChange("disconnected");
+            socket.close(4009, "incompatible protocol");
+            return;
+          }
+          if (!authenticated) monitorSocket(socket);
           authenticated = true;
           this.ready = true;
           this.reconnectAttempt = 0;
@@ -133,7 +144,11 @@ export class SessionClient {
       });
 
       socket.addEventListener("error", () => {
+        if (!this.active || this.socket !== socket) return;
+        this.ready = false;
+        this.callbacks.onConnectionChange(authenticated ? "reconnecting" : "disconnected");
         failBeforeReady("会话同步连接失败。");
+        socket.close();
       });
 
       socket.addEventListener("close", (event) => {
@@ -219,10 +234,27 @@ export function safeSocketSend(socket: WebSocket, payload: Record<string, unknow
   }
 }
 
-function parseServerEvent(value: string): ServerEvent | null {
+// Browsers do not expose WebSocket ping/pong. A small application heartbeat
+// detects half-open connections even when no transcript or answer is flowing.
+export function monitorSocket(socket: WebSocket) {
+  let awaitingReply = false;
+  const timer = window.setInterval(() => {
+    if (awaitingReply || !safeSocketSend(socket, { type: "ping" })) {
+      socket.close(4000, "connection heartbeat timed out");
+      return;
+    }
+    awaitingReply = true;
+  }, 10_000);
+  socket.addEventListener("message", () => { awaitingReply = false; });
+  socket.addEventListener("close", () => window.clearInterval(timer), { once: true });
+}
+
+export function parseServerEvent(value: string): ServerEvent | null {
   try {
     const parsed = JSON.parse(value) as ServerEvent;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.type === "string"
+      ? parsed
+      : null;
   } catch {
     return null;
   }

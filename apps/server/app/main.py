@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import hashlib
 import time
 import ipaddress
+import json
+import os
 from pathlib import Path
 from typing import cast
 
@@ -11,13 +14,12 @@ from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response, W
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.config import get_settings
+from app.config import REALTIME_PROTOCOL_VERSION, get_settings
 from app.models import BrowserLogin, ConnectionRole
 from app.services.openai_realtime import OpenAIRealtimeError, get_interview_registry
 
 
-API_VERSION = "0.5.0"
-REALTIME_PROTOCOL_VERSION = "realtime-interview-v4"
+API_VERSION = "0.6.0"
 BROWSER_COOKIE_NAME = "interview_browser_session"
 BROWSER_COOKIE_TTL_SECONDS = 3600
 
@@ -35,15 +37,19 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict[str, str]:
     settings = get_settings()
-    return {
+    payload = {
         "status": "ok",
         "version": API_VERSION,
         "realtime_protocol": REALTIME_PROTOCOL_VERSION,
-        "realtime_model": settings.openai_realtime_model,
+        "live_model": settings.openai_live_model,
         "realtime_transcription_model": settings.openai_realtime_transcription_model,
-        "realtime_reasoning_effort": settings.openai_realtime_reasoning_effort,
+        "code_reasoning_effort": settings.openai_code_reasoning_effort,
         "code_model": settings.openai_code_model,
     }
+    release_id = os.getenv("INTERVIEW_RELEASE_ID", "").strip()
+    if release_id:
+        payload["release_id"] = release_id
+    return payload
 
 
 @app.post("/api/interviews", status_code=status.HTTP_201_CREATED)
@@ -61,7 +67,10 @@ async def create_interview(
             headers={"WWW-Authenticate": "Bearer"},
         )
     response.headers["Cache-Control"] = "no-store"
-    runtime = await get_interview_registry().create()
+    try:
+        runtime = await get_interview_registry().create()
+    except OpenAIRealtimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from None
     return {
         "interview_id": runtime.interview_id,
         "session_token": runtime.session_token,
@@ -126,6 +135,102 @@ async def delete_interview(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@app.post("/api/interviews/{interview_id}/screenshots")
+async def upload_interview_screenshot(
+    interview_id: str,
+    request: Request,
+    response: Response,
+    authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    runtime = await get_interview_registry().get(interview_id)
+    if runtime is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview session not found.")
+    if not runtime.capture_token_matches(_bearer_token(authorization)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid capture token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if runtime.closed or not runtime.active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Interview is not active.")
+
+    # Authenticate before reading a potentially large image. Bound streamed/chunked
+    # bodies too: Content-Length alone is not a trustworthy size limit.
+    body_limit = ((get_settings().interview_screenshot_max_bytes + 2) // 3) * 4 + 8192
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > body_limit:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Screenshot upload is too large.")
+        body.extend(chunk)
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid screenshot JSON.") from None
+    if not isinstance(payload, dict) or any(
+        not isinstance(payload.get(field), str) or not payload[field]
+        for field in ("request_id", "image_data")
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="request_id and image_data are required strings.")
+    for field, limit in (("request_id", 256), ("source_id", 512), ("captured_at", 80)):
+        if field in payload and (not isinstance(payload[field], str) or len(payload[field]) > limit):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid screenshot {field}.")
+    # HTTP success must mean a real pending request received a valid image, not
+    # that a client-supplied error or arbitrary stale frame was accepted.
+    payload = {key: payload[key] for key in ("request_id", "image_data", "source_id", "captured_at") if key in payload}
+    try:
+        accepted = await runtime.accept_screen_snapshot(payload)
+    except OpenAIRealtimeError as exc:
+        code = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if "size limit" in str(exc) or "too large" in str(exc) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=code, detail=str(exc)) from None
+    if not accepted:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Screenshot request is no longer pending.")
+    response.headers["Cache-Control"] = "no-store"
+    return {"ok": True}
+
+
+def _require_deployment_access(request: Request, authorization: str | None) -> None:
+    configured_token = get_settings().interview_access_token
+    _require_configured_or_loopback(request, configured_token)
+    if configured_token and not _token_matches(_bearer_token(authorization), configured_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid deployment access token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+@app.get("/api/deployment")
+async def deployment_state(
+    request: Request, response: Response, authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    _require_deployment_access(request, authorization)
+    response.headers["Cache-Control"] = "no-store"
+    return await get_interview_registry().deployment_state()
+
+
+@app.post("/api/deployment")
+async def begin_deployment(
+    request: Request, response: Response, authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    _require_deployment_access(request, authorization)
+    registry = get_interview_registry()
+    if not await registry.begin_deployment():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An interview is active. Deployment was not started.")
+    response.headers["Cache-Control"] = "no-store"
+    return await registry.deployment_state()
+
+
+@app.delete("/api/deployment")
+async def cancel_deployment(
+    request: Request, response: Response, authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    _require_deployment_access(request, authorization)
+    registry = get_interview_registry()
+    await registry.cancel_deployment()
+    response.headers["Cache-Control"] = "no-store"
+    return await registry.deployment_state()
+
+
 @app.websocket("/ws/interviews/{interview_id}/{speaker}")
 async def interview_stream(websocket: WebSocket, interview_id: str, speaker: str) -> None:
     if speaker not in {"interviewer", "candidate", "client"}:
@@ -144,17 +249,19 @@ async def interview_stream(websocket: WebSocket, interview_id: str, speaker: str
         return
     except OpenAIRealtimeError as exc:
         await _send_socket_error(websocket, str(exc))
-    except Exception as exc:
-        await _send_socket_error(websocket, str(exc))
+    except Exception:
+        await _send_socket_error(websocket, "The interview connection failed. Reconnect to restore the session.")
 
 
 async def _send_socket_error(websocket: WebSocket, detail: str) -> None:
     try:
-        await websocket.send_json({"type": "error", "detail": detail})
+        async with asyncio.timeout(2):
+            await websocket.send_json({"type": "error", "detail": detail})
     except Exception:
         pass
     try:
-        await websocket.close(code=1011)
+        async with asyncio.timeout(2):
+            await websocket.close(code=1011)
     except Exception:
         pass
 
@@ -238,12 +345,22 @@ def _websocket_origin_allowed(websocket: WebSocket) -> bool:
     return bool(host) and origin == f"{scheme}://{host}".rstrip("/")
 
 
+class InterviewStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: dict) -> Response:
+        response = await super().get_response(path, scope)
+        # Stable URLs must revalidate after a release, including conditional 304s.
+        # Otherwise an old HTML entry point can reference removed hashed assets.
+        if path in {".", "index.html", "pcm-worklet.js"}:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def _mount_web_app() -> None:
     server_root = Path(__file__).resolve().parents[1]
     candidates = (server_root / "web", server_root.parent / "desktop" / "dist")
     for candidate in candidates:
         if (candidate / "index.html").is_file():
-            app.mount("/", StaticFiles(directory=candidate, html=True), name="web")
+            app.mount("/", InterviewStaticFiles(directory=candidate, html=True), name="web")
             return
 
 
