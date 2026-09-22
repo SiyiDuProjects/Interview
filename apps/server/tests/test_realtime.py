@@ -942,7 +942,8 @@ class RealtimeToolTests(unittest.TestCase):
             for source, text in documents.items():
                 (root / source).write_text(text, encoding="utf-8", newline="")
             client = FakeHTTPClient()
-            input_text = asyncio.run(run(root, client))
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-only-not-real"}):
+                input_text = asyncio.run(run(root, client))
         # Exact JSON representations prove no file was selected, shortened or omitted.
         for source, text in documents.items():
             self.assertTrue(
